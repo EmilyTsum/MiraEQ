@@ -2,7 +2,7 @@ import Foundation
 import CoreAudio
 
 public protocol DeviceMonitorDelegate: AnyObject {
-    func defaultOutputDeviceDidChange(to deviceID: AudioObjectID, isBuiltInSpeakers: Bool, name: String)
+    func defaultOutputDeviceDidChange(to deviceID: AudioObjectID, isBuiltInSpeakers: Bool, name: String, uid: String)
 }
 
 public class DeviceMonitor {
@@ -23,15 +23,15 @@ public class DeviceMonitor {
         // First, trigger delegate for current state
         if let currentID = getCurrentDefaultOutputDeviceID() {
             let info = Self.getDeviceInfo(deviceID: currentID)
-            delegate?.defaultOutputDeviceDidChange(to: currentID, isBuiltInSpeakers: info.isSpeakers, name: info.name)
+            delegate?.defaultOutputDeviceDidChange(to: currentID, isBuiltInSpeakers: info.isSpeakers, name: info.name, uid: info.uid)
         }
-        
+
         // Define listener block
         let block: AudioObjectPropertyListenerBlock = { [weak self] (numberAddresses, addresses) in
             guard let self = self else { return }
             if let currentID = self.getCurrentDefaultOutputDeviceID() {
                 let info = Self.getDeviceInfo(deviceID: currentID)
-                self.delegate?.defaultOutputDeviceDidChange(to: currentID, isBuiltInSpeakers: info.isSpeakers, name: info.name)
+                self.delegate?.defaultOutputDeviceDidChange(to: currentID, isBuiltInSpeakers: info.isSpeakers, name: info.name, uid: info.uid)
             }
         }
         

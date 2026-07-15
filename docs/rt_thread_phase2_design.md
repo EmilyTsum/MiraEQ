@@ -1,6 +1,6 @@
 # Phase 2 Design: DSPResources Structural Isolation (Revised)
 
-This document outlines the design for Phase 2 of the real-time audio thread safety improvements in [AudioEngine.swift](file:///Users/noxlume03/MiraEq/Sources/MiraEq/AudioEngine.swift). The goal of this phase is to isolate all dynamically allocated buffers and mutable DSP states into a single struct `DSPResources` and swap it atomically, ensuring zero ARC overhead and zero dynamic allocations/deallocations in the real-time thread.
+This document outlines the design for Phase 2 of the real-time audio thread safety improvements in [AudioEngine.swift](file:///Users/noxlume03/MiraEQ/Sources/MiraEQ/AudioEngine.swift). The goal of this phase is to isolate all dynamically allocated buffers and mutable DSP states into a single struct `DSPResources` and swap it atomically, ensuring zero ARC overhead and zero dynamic allocations/deallocations in the real-time thread.
 
 ---
 

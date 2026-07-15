@@ -502,6 +502,10 @@ private let rtLastRenderDurationTicks = ManagedAtomic<UInt64>(0)
 private let rtMaxRenderDurationTicks = ManagedAtomic<UInt64>(0)
 private let rtIdleRenderCallbackCount = ManagedAtomic<UInt64>(0)
 private let rtNeedsPriming = ManagedAtomic<UInt32>(1)
+// mach_absolute_time of the last tapped buffer that contained audible samples.
+// Written by the IO callback, read on the main actor for auto-standby.
+private let rtLastAudibleHostTime = ManagedAtomic<UInt64>(0)
+private let audibleSampleThreshold: Float = 0.000_1
 
 private let machTimebaseInfo: mach_timebase_info_data_t = {
     var info = mach_timebase_info_data_t()
@@ -1079,6 +1083,32 @@ private func readOutputVolumeScalar(deviceID: AudioObjectID) -> Float? {
     return count > 0 ? total / count : nil
 }
 
+private func readOutputMute(deviceID: AudioObjectID) -> Bool {
+    var muteAddress = AudioObjectPropertyAddress(
+        mSelector: kAudioDevicePropertyMute,
+        mScope: kAudioDevicePropertyScopeOutput,
+        mElement: kAudioObjectPropertyElementMain
+    )
+    guard AudioObjectHasProperty(deviceID, &muteAddress) else { return false }
+
+    var muted: UInt32 = 0
+    var size = UInt32(MemoryLayout<UInt32>.size)
+    let status = AudioObjectGetPropertyData(deviceID, &muteAddress, 0, nil, &size, &muted)
+    return status == noErr && muted != 0
+}
+
+private func deviceIsRunningSomewhere(deviceID: AudioObjectID) -> Bool {
+    var address = AudioObjectPropertyAddress(
+        mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+    )
+    var running: UInt32 = 0
+    var size = UInt32(MemoryLayout<UInt32>.size)
+    let status = AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &running)
+    return status == noErr && running != 0
+}
+
 private struct AudioBufferFrameSizeRestorePoint {
     let deviceID: AudioObjectID
     let frames: UInt32
@@ -1236,7 +1266,19 @@ public final class AudioEngineManager {
     private var startedAt: Date?
     private var startCount: UInt64 = 0
     private var lifecycleGeneration: UInt64 = 0
-    
+    private var pendingStartTask: Task<Void, Never>?
+
+    // Auto-standby: engine torn down while playback is silent so the system
+    // audio-capture indicator disappears; device/config kept for resume.
+    public private(set) var isInStandby = false
+    private var standbyDeviceID: AudioObjectID?
+    private var standbyConfig: EQConfig?
+    private let autoStandbySilenceSeconds: Double = 10
+
+    /// Called on the main actor whenever a serialized start/stop/standby
+    /// transition finishes, so the UI can refresh.
+    public var onStateChange: (() -> Void)?
+
     private var tapID = AudioObjectID(kAudioObjectUnknown)
     private var aggregateDeviceID = AudioObjectID(kAudioObjectUnknown)
     private var procID: AudioDeviceIOProcID?
@@ -1338,6 +1380,65 @@ public final class AudioEngineManager {
         outputBufferFrameRestorePoint = nil
     }
     
+    /// Serialized entry point for starting the engine. Cancels any start still
+    /// in flight and waits for it to unwind before beginning a new one, so two
+    /// starts can never interleave and leak taps or aggregate devices.
+    public func requestStart(outputDeviceID: AudioObjectID, config: EQConfig) {
+        isInStandby = false
+        standbyDeviceID = nil
+        standbyConfig = nil
+
+        let previous = pendingStartTask
+        previous?.cancel()
+        let task = Task { @MainActor [weak self] in
+            await previous?.value
+            guard !Task.isCancelled else { return }
+            await self?.start(outputDeviceID: outputDeviceID, config: config)
+            self?.onStateChange?()
+        }
+        pendingStartTask = task
+    }
+
+    /// Evaluates auto-standby transitions. Returns true when the state changed.
+    public func updateAutoStandby() -> Bool {
+        if isActive {
+            guard let deviceID = activeDeviceID, let config = currentConfig else { return false }
+            let muted = readOutputMute(deviceID: deviceID)
+            let volumeIsZero = outputVolumeScalar <= 0.000_1
+            let silentForSeconds = secondsSinceLastAudibleAudio()
+            if muted || volumeIsZero || silentForSeconds >= autoStandbySilenceSeconds {
+                os_log(.default, log: appLog,
+                       "%{public}s entering standby (muted: %d, volumeZero: %d, silentSeconds: %.1f)",
+                       AppInfo.displayName, muted ? 1 : 0, volumeIsZero ? 1 : 0, silentForSeconds)
+                stop()
+                standbyDeviceID = deviceID
+                standbyConfig = config
+                isInStandby = true
+                return true
+            }
+            return false
+        }
+
+        if isInStandby, let deviceID = standbyDeviceID, let config = standbyConfig {
+            let muted = readOutputMute(deviceID: deviceID)
+            let volume = readOutputVolumeScalar(deviceID: deviceID) ?? 0
+            if !muted, volume > 0.000_1, deviceIsRunningSomewhere(deviceID: deviceID) {
+                os_log(.default, log: appLog, "%{public}s resuming from standby", AppInfo.displayName)
+                requestStart(outputDeviceID: deviceID, config: config)
+                return true
+            }
+        }
+        return false
+    }
+
+    private func secondsSinceLastAudibleAudio() -> Double {
+        let last = rtLastAudibleHostTime.load(ordering: .relaxed)
+        guard last > 0 else { return 0 }
+        let now = mach_absolute_time()
+        guard now > last else { return 0 }
+        return machTicksToMilliseconds(now - last) / 1_000
+    }
+
     public func start(outputDeviceID: AudioObjectID, config: EQConfig) async {
         if isActive && activeDeviceID == outputDeviceID {
             if requiresRestartForLatencyChange(to: config) {
@@ -1614,7 +1715,15 @@ public final class AudioEngineManager {
                     totalSamples = availableSamples - (availableSamples % expectedChannels)
                     guard totalSamples > 0 else { return }
                     frames = totalSamples / expectedChannels
-                    let dropped = ringBuf.write(data.assumingMemoryBound(to: Float.self), count: totalSamples)
+                    let interleavedSource = data.assumingMemoryBound(to: Float.self)
+                    var peak: Float = 0
+                    for sampleIndex in 0..<totalSamples {
+                        peak = max(peak, fabsf(interleavedSource[sampleIndex]))
+                    }
+                    if peak > audibleSampleThreshold {
+                        rtLastAudibleHostTime.store(mach_absolute_time(), ordering: .relaxed)
+                    }
+                    let dropped = ringBuf.write(interleavedSource, count: totalSamples)
                     if dropped > 0 {
                         rtDroppedSampleCount.wrappingIncrement(by: UInt64(dropped), ordering: .relaxed)
                     }
@@ -1652,6 +1761,13 @@ public final class AudioEngineManager {
                                 interleaveBuf[f * expectedChannels + c] = 0.0
                             }
                         }
+                    }
+                    var peak: Float = 0
+                    for sampleIndex in 0..<totalSamples {
+                        peak = max(peak, fabsf(interleaveBuf[sampleIndex]))
+                    }
+                    if peak > audibleSampleThreshold {
+                        rtLastAudibleHostTime.store(mach_absolute_time(), ordering: .relaxed)
                     }
                     let dropped = ringBuf.write(interleaveBuf, count: totalSamples)
                     if dropped > 0 {
@@ -1695,21 +1811,20 @@ public final class AudioEngineManager {
             self.isActive = true
             self.startedAt = Date()
             self.startCount &+= 1
+            rtLastAudibleHostTime.store(mach_absolute_time(), ordering: .relaxed)
             os_log(.default, log: appLog, "%{public}s started and tapping audio for: %{public}s", AppInfo.displayName, deviceName)
-            
+
         } catch is AudioEngineStartCancellation {
-            if isCurrentLifecycle(generation) {
-                stopCurrent()
-            }
+            // Starts are serialized through requestStart, so everything in the
+            // instance fields belongs to this invocation: always tear it down,
+            // even when this start was superseded, so taps and aggregate
+            // devices can never leak.
+            stopCurrent()
         } catch is CancellationError {
-            if isCurrentLifecycle(generation) {
-                stopCurrent()
-            }
+            stopCurrent()
         } catch {
-            if isCurrentLifecycle(generation) {
-                os_log(.error, log: appLog, "Error starting %{public}s: %{public}s", AppInfo.displayName, error.localizedDescription)
-                stopCurrent()
-            }
+            os_log(.error, log: appLog, "Error starting %{public}s: %{public}s", AppInfo.displayName, error.localizedDescription)
+            stopCurrent()
         }
     }
 
@@ -1721,6 +1836,10 @@ public final class AudioEngineManager {
     }
     
     public func stop() {
+        pendingStartTask?.cancel()
+        isInStandby = false
+        standbyDeviceID = nil
+        standbyConfig = nil
         _ = beginLifecycleChange()
         stopCurrent()
     }
@@ -1792,7 +1911,8 @@ public final class AudioEngineManager {
     public func restart() async {
         guard let deviceID = activeDeviceID, let config = currentConfig else { return }
         stop()
-        await start(outputDeviceID: deviceID, config: config)
+        requestStart(outputDeviceID: deviceID, config: config)
+        await pendingStartTask?.value
     }
     
     public func updateConfig(_ config: EQConfig) {

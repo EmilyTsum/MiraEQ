@@ -1,11 +1,11 @@
 import Foundation
 
 enum AppInfo {
-    static let displayName = "MiraEq"
-    static let configDirectoryName = "MiraEq"
+    static let displayName = "MiraEQ"
+    static let configDirectoryName = "MiraEQ"
     static let logSubsystem = "com.noxlume03.miraeq"
-    static let tapName = "MiraEq-Tap"
-    static let aggregateDeviceName = "MiraEq-Aggregate"
+    static let tapName = "MiraEQ-Tap"
+    static let aggregateDeviceName = "MiraEQ-Aggregate"
     static let statusIconSymbolName = "waveform.path"
 
     static var configPath: String {

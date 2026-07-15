@@ -3,19 +3,19 @@
 import PackageDescription
 
 let package = Package(
-    name: "MiraEq",
+    name: "MiraEQ",
     platforms: [
         .macOS("14.2")
     ],
     products: [
-        .executable(name: "MiraEq", targets: ["MiraEq"])
+        .executable(name: "MiraEQ", targets: ["MiraEQ"])
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-atomics.git", from: "1.2.0")
     ],
     targets: [
         .executableTarget(
-            name: "MiraEq",
+            name: "MiraEQ",
             dependencies: [
                 .product(name: "Atomics", package: "swift-atomics")
             ]

@@ -17,7 +17,7 @@ the Surround Position menu.
 
 ## Current Constraint
 
-MiraEq currently captures a stereo global process tap and the app diagnostics
+MiraEQ currently captures a stereo global process tap and the app diagnostics
 show a 2-channel processing format on the tested setup. Apple's official spec
 confirms a four-speaker sound system, but it does not imply that CoreAudio
 exposes four independently addressable built-in speaker channels to this app.
@@ -49,7 +49,7 @@ Listener model:
 
 The effective speaker spacing is an estimate, not an Apple-published internal
 dimension. It treats the four physical speakers as two left/right acoustic
-arrays because MiraEq receives and renders stereo.
+arrays because MiraEQ receives and renders stereo.
 
 ## Cross-Ear Delay
 
@@ -82,7 +82,7 @@ left-to-right speaker delay. It is a psychoacoustic rear/reflection cue.
 
 ## Preset Mapping
 
-`MiraEq_MacBook_Air_13_Geometry_Surround.txt` uses the model above:
+`MiraEQ_MacBook_Air_13_Geometry_Surround.txt` uses the model above:
 
 - Rear wrap: 56
 - Rear delay: 4.2 ms

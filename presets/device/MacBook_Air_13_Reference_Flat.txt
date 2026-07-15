@@ -1,4 +1,4 @@
-# MiraEq Preset: MacBook Air 13 Reference Flat
+# MiraEQ Preset: MacBook Air 13 Reference Flat
 # Designed to flatten the frequency response based on acoustics measurements.
 # It reduces the 1.2kHz boxy mid-range resonance and corrects the 4kHz treble dip.
 DeviceName: Speakers

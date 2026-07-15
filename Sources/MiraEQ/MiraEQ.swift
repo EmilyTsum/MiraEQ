@@ -88,6 +88,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, DeviceMonito
     private var diagnosticsRefreshTimer: Timer?
     private var diagnosticsSnapshotTick = 0
     private var volumeRefreshGeneration: UInt64 = 0
+    private var deviceChangeDebounceTask: Task<Void, Never>?
     private var latencyCriticalActivity: NSObjectProtocol?
     private weak var diagnosticsMenu: NSMenu?
     private var engineDiagnosticItem: NSMenuItem?
@@ -130,13 +131,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, DeviceMonito
         // Load initial config
         loadConfig()
         startVolumeRefreshTimer()
-        
+
+        audioEngine.onStateChange = { [weak self] in
+            guard let self else { return }
+            if !self.audioEngine.isActive && !self.audioEngine.isInStandby {
+                print(AppInfo.logPrefix("Audio engine is not active for \(self.activeDeviceName)"))
+            }
+            self.updateIcon()
+        }
+
         // Initialize Device Monitor
         deviceMonitor.delegate = self
         deviceMonitor.startMonitoring()
     }
     
     func applicationWillTerminate(_ notification: Notification) {
+        deviceChangeDebounceTask?.cancel()
         diagnosticsRefreshTimer?.invalidate()
         volumeRefreshGeneration &+= 1
         deviceMonitor.stopMonitoring()
@@ -254,8 +264,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, DeviceMonito
             return
         }
         
-        let info = DeviceMonitor.getDeviceInfo(deviceID: deviceID)
-        
+        // Reuse the cached device info when routing the active device to avoid
+        // redundant CoreAudio property queries during device-change bursts.
+        let info: (name: String, uid: String)
+        if deviceID == activeDeviceID, !activeDeviceName.isEmpty, activeDeviceName != "Unknown" {
+            info = (activeDeviceName, activeDeviceUID)
+        } else {
+            let fetched = DeviceMonitor.getDeviceInfo(deviceID: deviceID)
+            info = (fetched.name, fetched.uid)
+        }
+
         for mapping in mappings {
             let pattern = mapping.pattern.lowercased()
             if info.name.lowercased() == pattern || info.uid.lowercased() == pattern {
@@ -281,13 +299,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, DeviceMonito
                     return
                 }
 
-                Task { @MainActor in
-                    await audioEngine.start(outputDeviceID: deviceID, config: effectiveConfig)
-                    if !self.audioEngine.isActive {
-                        print(AppInfo.logPrefix("Failed to start audio engine for \(info.name)"))
-                    }
-                    self.updateIcon()
-                }
+                audioEngine.requestStart(outputDeviceID: deviceID, config: effectiveConfig)
+                self.updateIcon()
                 return
             }
         }
@@ -337,18 +350,30 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, DeviceMonito
     }
     
     // MARK: - DeviceMonitorDelegate
-    nonisolated func defaultOutputDeviceDidChange(to deviceID: AudioObjectID, isBuiltInSpeakers: Bool, name: String) {
+    nonisolated func defaultOutputDeviceDidChange(to deviceID: AudioObjectID, isBuiltInSpeakers: Bool, name: String, uid: String) {
         Task { @MainActor in
-            self.handleDeviceChange(deviceID: deviceID, isBuiltInSpeakers: isBuiltInSpeakers, name: name)
+            self.scheduleDeviceChange(deviceID: deviceID, isBuiltInSpeakers: isBuiltInSpeakers, name: name, uid: uid)
         }
     }
-    
-    private func handleDeviceChange(deviceID: AudioObjectID, isBuiltInSpeakers: Bool, name: String) {
+
+    /// Debounces rapid default-device flapping so only the last change within
+    /// the window is acted on; each engine start is expensive (tap + aggregate
+    /// device creation).
+    private func scheduleDeviceChange(deviceID: AudioObjectID, isBuiltInSpeakers: Bool, name: String, uid: String) {
+        deviceChangeDebounceTask?.cancel()
+        deviceChangeDebounceTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard let self, !Task.isCancelled else { return }
+            self.handleDeviceChange(deviceID: deviceID, isBuiltInSpeakers: isBuiltInSpeakers, name: name, uid: uid)
+        }
+    }
+
+    private func handleDeviceChange(deviceID: AudioObjectID, isBuiltInSpeakers: Bool, name: String, uid: String) {
         self.activeDeviceID = deviceID
         self.isBuiltInSpeakers = isBuiltInSpeakers
         self.activeDeviceName = name
-        self.activeDeviceUID = deviceID == 0 ? "" : DeviceMonitor.getDeviceInfo(deviceID: deviceID).uid
-        
+        self.activeDeviceUID = deviceID == 0 ? "" : uid
+
         print(AppInfo.logPrefix("Default device changed: \(name)"))
         evaluateRouting(deviceID: deviceID)
     }
@@ -363,8 +388,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, DeviceMonito
         let statusTitle: String
         if isAudioPausedByUser {
             statusTitle = "\(AppInfo.displayName): Paused"
+        } else if audioEngine.isActive {
+            statusTitle = "\(AppInfo.displayName): Active"
+        } else if audioEngine.isInStandby {
+            statusTitle = "\(AppInfo.displayName): Standby"
         } else {
-            statusTitle = audioEngine.isActive ? "\(AppInfo.displayName): Active" : "\(AppInfo.displayName): Bypassed"
+            statusTitle = "\(AppInfo.displayName): Bypassed"
         }
         let statusItem = NSMenuItem(title: statusTitle, action: nil, keyEquivalent: "")
         statusItem.isEnabled = false
@@ -387,7 +416,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, DeviceMonito
         let pauseTitle = isAudioPausedByUser ? "Resume Audio Processing" : "Pause Audio Processing"
         let pauseItem = NSMenuItem(title: pauseTitle, action: #selector(toggleAudioProcessingPaused), keyEquivalent: "")
         pauseItem.target = self
-        pauseItem.isEnabled = audioEngine.isActive || isAudioPausedByUser
+        pauseItem.isEnabled = audioEngine.isActive || audioEngine.isInStandby || isAudioPausedByUser
         menu.addItem(pauseItem)
         
         menu.addItem(.separator())
@@ -586,10 +615,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, DeviceMonito
             Task { @MainActor in
                 guard let self, self.volumeRefreshGeneration == generation else { return }
                 self.audioEngine.refreshOutputVolumeScalar()
-                self.diagnosticsSnapshotTick += 1
-                if self.diagnosticsSnapshotTick >= 2 {
-                    self.diagnosticsSnapshotTick = 0
-                    self.writeDiagnosticsSnapshot()
+                if !self.isAudioPausedByUser, self.audioEngine.updateAutoStandby() {
+                    self.updateIcon()
+                }
+                // Only write the diagnostics snapshot while processing is
+                // running; otherwise this would touch the disk forever.
+                if self.audioEngine.isActive {
+                    self.diagnosticsSnapshotTick += 1
+                    if self.diagnosticsSnapshotTick >= 2 {
+                        self.diagnosticsSnapshotTick = 0
+                        self.writeDiagnosticsSnapshot()
+                    }
                 }
                 self.scheduleVolumeRefreshTick(generation: generation)
             }
@@ -604,7 +640,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, DeviceMonito
 
         let updatedAt = ISO8601DateFormatter().string(from: Date())
         let lines = [
-            "MiraEq diagnostics",
+            "MiraEQ diagnostics",
             "updated: \(updatedAt)",
             "",
             "active: \(diagnostics.isActive ? "true" : "false")",
@@ -714,14 +750,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, DeviceMonito
     private func presetDisplayName(for file: String, in directory: String) -> String {
         let presetPath = (directory as NSString).appendingPathComponent(file)
         if let content = try? String(contentsOfFile: presetPath, encoding: .utf8) {
-            let titlePrefix = "# MiraEq Preset:"
-            if let titleLine = content.components(separatedBy: .newlines)
-                .first(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix(titlePrefix) }) {
-                let title = titleLine
-                    .replacingOccurrences(of: titlePrefix, with: "")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if !title.isEmpty {
-                    return title
+            // Accept both the current and the legacy (pre-rename) title prefix.
+            let titlePrefixes = ["# MiraEQ Preset:", "# MiraEq Preset:"]
+            for titlePrefix in titlePrefixes {
+                if let titleLine = content.components(separatedBy: .newlines)
+                    .first(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix(titlePrefix) }) {
+                    let title = titleLine
+                        .replacingOccurrences(of: titlePrefix, with: "")
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !title.isEmpty {
+                        return title
+                    }
                 }
             }
         }
@@ -1053,7 +1092,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, DeviceMonito
             sanitized = Array("Device")
         }
         let base = String(sanitized).split(separator: "_").joined(separator: "_")
-        return ".MiraEq_\(String(base.prefix(80)))_Processing.txt"
+        return ".MiraEQ_\(String(base.prefix(80)))_Processing.txt"
     }
 
     private func ensureActiveHiddenAddOnPreset() -> String? {
@@ -1142,7 +1181,7 @@ func hiddenTuningPresetContent(
         : ""
 
     return """
-    # MiraEq Hidden Processing Preset
+    # MiraEQ Hidden Processing Preset
     # This file stores per-device menu settings. It is managed by the app.
     Effect: Latency target \(formatPresetNumber(latencyMs)) ms
     Effect: Delay time \(formatPresetNumber(delayTime)) ms feedback 0 mix \(formatPresetNumber(delayMix))
@@ -1295,7 +1334,7 @@ extension AppDelegate {
 }
 
 @main
-struct MiraEq {
+struct MiraEQ {
     @MainActor
     static func main() {
         let args = CommandLine.arguments
