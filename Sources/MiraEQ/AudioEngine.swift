@@ -1341,6 +1341,10 @@ public final class AudioEngineManager {
     private var pendingStartTask: Task<Void, Never>?
     private var effectFadeTask: Task<Void, Never>?
     private var standbyPollTask: Task<Void, Never>?
+    // Whether flipping the tap's mute behavior after creation works on this
+    // system; when it doesn't, fall back to creating the tap muted (which
+    // reintroduces a short dropout at start but never doubled audio).
+    private var muteFlipSupported = true
 
     // Auto-standby: engine torn down while playback is silent so the system
     // audio-capture indicator disappears; device/config kept for resume.
@@ -1348,7 +1352,11 @@ public final class AudioEngineManager {
     private var standbyDeviceID: AudioObjectID?
     private var standbyConfig: EQConfig?
     private var standbyBaselinePlayers: Set<AudioObjectID> = []
-    private let autoStandbySilenceSeconds: Double = 10
+    private let autoStandbySilenceSeconds: Double = 120
+
+    /// When false, silence never triggers standby — only mute / zero volume
+    /// does. Persisted by the app layer.
+    public var silenceStandbyEnabled = true
 
     /// Called on the main actor whenever a serialized start/stop/standby
     /// transition finishes, so the UI can refresh.
@@ -1481,7 +1489,8 @@ public final class AudioEngineManager {
         let muted = readOutputMute(deviceID: deviceID)
         let volumeIsZero = outputVolumeScalar <= 0.000_1
         let silentForSeconds = secondsSinceLastAudibleAudio()
-        if muted || volumeIsZero || silentForSeconds >= autoStandbySilenceSeconds {
+        let silenceTriggered = silenceStandbyEnabled && silentForSeconds >= autoStandbySilenceSeconds
+        if muted || volumeIsZero || silenceTriggered {
             os_log(.default, log: appLog,
                    "%{public}s entering standby (muted: %d, volumeZero: %d, silentSeconds: %.1f)",
                    AppInfo.displayName, muted ? 1 : 0, volumeIsZero ? 1 : 0, silentForSeconds)
@@ -1610,8 +1619,9 @@ public final class AudioEngineManager {
             }
         }
 
+        let startBeganTicks = mach_absolute_time()
         let generation = beginLifecycleChange()
-        
+
         stopCurrent()
         
         let info = DeviceMonitor.getDeviceInfo(deviceID: outputDeviceID)
@@ -1647,7 +1657,10 @@ public final class AudioEngineManager {
             let excludeProcesses: [AudioObjectID] = myProcessObjectID != kAudioObjectUnknown ? [myProcessObjectID] : []
             let tapDesc = CATapDescription(stereoGlobalTapButExcludeProcesses: excludeProcesses)
             tapDesc.uuid = tapUUID
-            tapDesc.muteBehavior = .muted
+            // Start unmuted so the original audio keeps playing while the
+            // engine spins up (no audible dropout); switched to muted right
+            // after our processed output is running.
+            tapDesc.muteBehavior = muteFlipSupported ? .unmuted : .muted
             tapDesc.name = AppInfo.tapName
             
             tapID = AudioObjectID(kAudioObjectUnknown)
@@ -1737,12 +1750,12 @@ public final class AudioEngineManager {
                 mScope: kAudioObjectPropertyScopeGlobal,
                 mElement: kAudioObjectPropertyElementMain
             )
-            for _ in 1...30 {
+            for _ in 1...150 {
                 var isAlive: UInt32 = 0
                 var aliveSize = UInt32(MemoryLayout<UInt32>.size)
                 AudioObjectGetPropertyData(aggregateDeviceID, &aliveAddress, 0, nil, &aliveSize, &isAlive)
                 if isAlive != 0 { break }
-                try await Task.sleep(nanoseconds: 100_000_000)
+                try await Task.sleep(nanoseconds: 20_000_000)
                 try checkCurrentLifecycle(generation)
             }
             try checkCurrentLifecycle(generation)
@@ -1973,13 +1986,35 @@ public final class AudioEngineManager {
             try avEngine.start()
             self.engine = avEngine
 
+            // Our processed output is now running: mute the original signal.
+            var muteFlipFailed = false
+            if muteFlipSupported {
+                let muteStatus = setTapMuted(tapID: tapID, description: tapDesc, muted: true)
+                if muteStatus != noErr {
+                    os_log(.error, log: appLog,
+                           "%{public}s failed to switch tap to muted (OSStatus %d); falling back to muted-at-creation",
+                           AppInfo.displayName, muteStatus)
+                    muteFlipSupported = false
+                    muteFlipFailed = true
+                }
+            }
+
             try checkCurrentLifecycle(generation)
             self.isActive = true
             self.startedAt = Date()
             self.startCount &+= 1
             rtLastAudibleHostTime.store(mach_absolute_time(), ordering: .relaxed)
             beginEffectFadeIn()
-            os_log(.default, log: appLog, "%{public}s started and tapping audio for: %{public}s", AppInfo.displayName, deviceName)
+            let startDurationMs = machTicksToMilliseconds(mach_absolute_time() &- startBeganTicks)
+            os_log(.default, log: appLog, "%{public}s started in %.0f ms, tapping audio for: %{public}s",
+                   AppInfo.displayName, startDurationMs, deviceName)
+
+            if muteFlipFailed {
+                // Never leave doubled audio (original + processed) playing.
+                Task { @MainActor [weak self] in
+                    await self?.restart()
+                }
+            }
 
         } catch is AudioEngineStartCancellation {
             // Starts are serialized through requestStart, so everything in the
@@ -1991,7 +2026,22 @@ public final class AudioEngineManager {
             stopCurrent()
         } catch {
             os_log(.error, log: appLog, "Error starting %{public}s: %{public}s", AppInfo.displayName, error.localizedDescription)
+            print(AppInfo.logPrefix("Error starting audio engine: \(error.localizedDescription)"))
             stopCurrent()
+        }
+    }
+
+    private func setTapMuted(tapID: AudioObjectID, description: CATapDescription, muted: Bool) -> OSStatus {
+        description.muteBehavior = muted ? .muted : .unmuted
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioTapPropertyDescription,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var descriptionRef: CATapDescription? = description
+        let size = UInt32(MemoryLayout<CATapDescription?>.size)
+        return withUnsafeMutablePointer(to: &descriptionRef) {
+            AudioObjectSetPropertyData(tapID, &address, 0, nil, size, $0)
         }
     }
 

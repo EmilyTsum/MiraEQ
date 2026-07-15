@@ -89,6 +89,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, DeviceMonito
     private var diagnosticsSnapshotTick = 0
     private var volumeRefreshGeneration: UInt64 = 0
     private var deviceChangeDebounceTask: Task<Void, Never>?
+    private let silenceStandbyDefaultsKey = "SilenceStandbyEnabled"
     private var latencyCriticalActivity: NSObjectProtocol?
     private weak var diagnosticsMenu: NSMenu?
     private var engineDiagnosticItem: NSMenuItem?
@@ -131,6 +132,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, DeviceMonito
         // Load initial config
         loadConfig()
         startVolumeRefreshTimer()
+
+        if UserDefaults.standard.object(forKey: silenceStandbyDefaultsKey) != nil {
+            audioEngine.silenceStandbyEnabled = UserDefaults.standard.bool(forKey: silenceStandbyDefaultsKey)
+        }
 
         audioEngine.onStateChange = { [weak self] in
             guard let self else { return }
@@ -424,6 +429,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, DeviceMonito
         pauseItem.target = self
         pauseItem.isEnabled = audioEngine.isActive || audioEngine.isInStandby || isAudioPausedByUser
         menu.addItem(pauseItem)
+
+        // Mute / zero volume always stops capture; this only controls the
+        // silence-based trigger.
+        let standbyToggle = NSMenuItem(
+            title: "Auto-Standby When Silent (2 min)",
+            action: #selector(toggleSilenceStandby),
+            keyEquivalent: ""
+        )
+        standbyToggle.target = self
+        standbyToggle.state = audioEngine.silenceStandbyEnabled ? .on : .off
+        menu.addItem(standbyToggle)
         
         menu.addItem(.separator())
         
@@ -664,6 +680,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, DeviceMonito
             "active: \(diagnostics.isActive ? "true" : "false")",
             "silentSeconds: \(String(format: "%.1f", audioEngine.secondsSinceLastAudible()))",
             "lastAudiblePeak: \(String(format: "%.5f", audioEngine.lastAudiblePeak()))",
+            "startCount: \(diagnostics.startCount)",
             "engine: \(diagnostics.engineRunning ? "running" : "stopped")",
             "device: \(diagnostics.activeDeviceName ?? "Unknown")",
             "sampleRate: \(Int(diagnostics.sampleRate.rounded()))",
@@ -1313,6 +1330,17 @@ extension AppDelegate {
     
     @objc func manualReload() {
         loadConfig()
+    }
+
+    @objc func toggleSilenceStandby() {
+        audioEngine.silenceStandbyEnabled.toggle()
+        UserDefaults.standard.set(audioEngine.silenceStandbyEnabled, forKey: silenceStandbyDefaultsKey)
+        // Turning silence standby off while already in silence-standby should
+        // bring processing back.
+        if !audioEngine.silenceStandbyEnabled, audioEngine.isInStandby {
+            audioEngine.wakeFromStandbyNow()
+        }
+        print(AppInfo.logPrefix("Silence standby \(audioEngine.silenceStandbyEnabled ? "enabled" : "disabled")"))
     }
 
     @objc func wakeFromStandby() {
