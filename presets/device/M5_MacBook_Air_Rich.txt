@@ -2,20 +2,21 @@
 # Based on M5_MacBook_Air_Favorite. Restores lower-mid body (180-500 Hz)
 # that the Favorite preset carves out, for a weightier MacBook Pro-like
 # character, while keeping the boxiness cuts at 1-2 kHz.
-# Preamp is set to -4.5 dB for headroom (max gain +3.57 dB at 125 Hz plus
+# 2026-07-15: +weight revision — more 64-250 Hz body, softer 500 Hz cut.
+# Preamp lowered to -5.5 dB for headroom (max gain +4.0 dB at 125 Hz plus
 # restored low-mid energy).
 DeviceName: Speakers
-Preamp: -4.5 dB
+Preamp: -5.5 dB
 
 Effect: BassHarmonics amount 6 cutoff 135 Hz
-Effect: LowEndGuard amount 45 threshold -18 dB cutoff 180 Hz ratio 4 maxReduction 4.5 dB
+Effect: LowEndGuard amount 45 threshold -18 dB cutoff 180 Hz ratio 4 maxReduction 5.0 dB
 
 Filter 1: ON PK Fc 32 Hz Gain 0.0 dB Bandwidth 1.00
-Filter 2: ON PK Fc 64 Hz Gain 1.33 dB Bandwidth 2.54
-Filter 3: ON PK Fc 125 Hz Gain 3.57 dB Bandwidth 1.17
-Filter 4: ON PK Fc 180 Hz Gain 1.20 dB Bandwidth 1.20
-Filter 5: ON PK Fc 250 Hz Gain -1.00 dB Bandwidth 1.00
-Filter 6: ON PK Fc 500 Hz Gain -4.50 dB Bandwidth 1.00
+Filter 2: ON PK Fc 64 Hz Gain 2.20 dB Bandwidth 2.54
+Filter 3: ON PK Fc 125 Hz Gain 4.00 dB Bandwidth 1.17
+Filter 4: ON PK Fc 180 Hz Gain 2.20 dB Bandwidth 1.20
+Filter 5: ON PK Fc 250 Hz Gain 0.00 dB Bandwidth 1.00
+Filter 6: ON PK Fc 500 Hz Gain -3.60 dB Bandwidth 1.00
 Filter 7: ON PK Fc 1000 Hz Gain -4.03 dB Bandwidth 1.00
 Filter 8: ON PK Fc 2000 Hz Gain -6.60 dB Bandwidth 1.00
 Filter 9: ON PK Fc 4000 Hz Gain -2.57 dB Bandwidth 1.00

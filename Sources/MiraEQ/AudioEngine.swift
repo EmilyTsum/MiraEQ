@@ -1345,6 +1345,16 @@ public final class AudioEngineManager {
     // system; when it doesn't, fall back to creating the tap muted (which
     // reintroduces a short dropout at start but never doubled audio).
     private var muteFlipSupported = true
+    // A single flip failure can be transient (HAL still settling right after
+    // launch); only give up on seamless starts after consecutive failures.
+    private var muteFlipFailureStreak = 0
+    // Set after a flip failure so the immediate fallback restart creates its
+    // tap muted, without permanently giving up on seamless starts.
+    private var forceMutedTapOnce = false
+
+    /// Whether starts run seamlessly (tap created unmuted, flipped to muted
+    /// once processed output is up). Exposed for diagnostics.
+    public var seamlessStartActive: Bool { muteFlipSupported }
 
     // Auto-standby: engine torn down while playback is silent so the system
     // audio-capture indicator disappears; device/config kept for resume.
@@ -1467,6 +1477,10 @@ public final class AudioEngineManager {
     /// in flight and waits for it to unwind before beginning a new one, so two
     /// starts can never interleave and leak taps or aggregate devices.
     public func requestStart(outputDeviceID: AudioObjectID, config: EQConfig) {
+        requestStart(outputDeviceID: outputDeviceID, config: config, retriesRemaining: 2)
+    }
+
+    private func requestStart(outputDeviceID: AudioObjectID, config: EQConfig, retriesRemaining: Int) {
         isInStandby = false
         standbyDeviceID = nil
         standbyConfig = nil
@@ -1477,7 +1491,19 @@ public final class AudioEngineManager {
             await previous?.value
             guard !Task.isCancelled else { return }
             await self?.start(outputDeviceID: outputDeviceID, config: config)
-            self?.onStateChange?()
+            guard let self else { return }
+            self.onStateChange?()
+            // A start can fail transiently (device still settling after a
+            // hot-plug, CoreAudio busy). Without a retry the engine would stay
+            // off until the next device change, with no enabled menu recovery.
+            if !self.isActive, !Task.isCancelled, retriesRemaining > 0 {
+                os_log(.default, log: appLog,
+                       "%{public}s start did not come up; retrying in 2 s (%d left)",
+                       AppInfo.displayName, retriesRemaining)
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                guard !Task.isCancelled, !self.isActive, !self.isInStandby else { return }
+                self.requestStart(outputDeviceID: outputDeviceID, config: config, retriesRemaining: retriesRemaining - 1)
+            }
         }
         pendingStartTask = task
     }
@@ -1618,7 +1644,6 @@ public final class AudioEngineManager {
                 return
             }
         }
-
         let startBeganTicks = mach_absolute_time()
         let generation = beginLifecycleChange()
 
@@ -1660,7 +1685,9 @@ public final class AudioEngineManager {
             // Start unmuted so the original audio keeps playing while the
             // engine spins up (no audible dropout); switched to muted right
             // after our processed output is running.
-            tapDesc.muteBehavior = muteFlipSupported ? .unmuted : .muted
+            let startedTapUnmuted = muteFlipSupported && !forceMutedTapOnce
+            forceMutedTapOnce = false
+            tapDesc.muteBehavior = startedTapUnmuted ? .unmuted : .muted
             tapDesc.name = AppInfo.tapName
             
             tapID = AudioObjectID(kAudioObjectUnknown)
@@ -1777,7 +1804,6 @@ public final class AudioEngineManager {
             self.bufferCapacitySamples = ringBuf.capacitySamples
             resetRuntimeDiagnostics()
             setupResources(sampleRate: sampleRate, channels: Int(channels), ringBuf: ringBuf)
-            
             // 6. Setup AVAudioEngine
             let avEngine = AVAudioEngine()
             
@@ -1960,7 +1986,6 @@ public final class AudioEngineManager {
                     }
                 }
             }
-            
             try caCheck(
                 AudioDeviceCreateIOProcIDWithBlock(&procID, aggregateDeviceID, nil, ioBlock),
                 "Failed to create IOProc"
@@ -1988,14 +2013,20 @@ public final class AudioEngineManager {
 
             // Our processed output is now running: mute the original signal.
             var muteFlipFailed = false
-            if muteFlipSupported {
+            if startedTapUnmuted {
                 let muteStatus = setTapMuted(tapID: tapID, description: tapDesc, muted: true)
                 if muteStatus != noErr {
-                    os_log(.error, log: appLog,
-                           "%{public}s failed to switch tap to muted (OSStatus %d); falling back to muted-at-creation",
-                           AppInfo.displayName, muteStatus)
-                    muteFlipSupported = false
+                    muteFlipFailureStreak += 1
+                    if muteFlipFailureStreak >= 2 {
+                        muteFlipSupported = false
+                    }
+                    forceMutedTapOnce = true
                     muteFlipFailed = true
+                    os_log(.error, log: appLog,
+                           "%{public}s failed to switch tap to muted (OSStatus %d, streak %d); restarting with muted-at-creation",
+                           AppInfo.displayName, muteStatus, muteFlipFailureStreak)
+                } else {
+                    muteFlipFailureStreak = 0
                 }
             }
 

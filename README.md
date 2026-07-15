@@ -19,7 +19,8 @@ xattr -cr /Applications/MiraEQ.app
 
 - Per-device EQ presets (32-band) with automatic routing on default-device change
 - Spatial model, bass harmonics/focus/comp, low-end guard, final safety limiter
-- Auto-standby: when playback is silent for 10 seconds (or the output is muted / at zero volume), audio capture stops so the system audio indicator disappears; processing resumes automatically when playback restarts
+- Auto-standby: when playback is silent for 2 minutes (toggleable in the menu) or the output is muted / at zero volume (always), audio capture stops so the system audio indicator disappears; processing resumes automatically when playback restarts, with the original audio kept playing during the seamless switchover
+- Preset files hot-reload: editing `config.txt` or any preset file re-applies the configuration immediately
 - Config and presets live in `~/.config/MiraEQ`
 
 ## Build

@@ -47,7 +47,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, DeviceMonito
     let audioEngine = AudioEngineManager()
     let deviceMonitor = DeviceMonitor()
     var fileWatcher: FileWatcher!
-    
+    var devicePresetWatcher: FileWatcher?
+    var addOnPresetWatcher: FileWatcher?
+    private var presetReloadDebounceTask: Task<Void, Never>?
+
     var mappings: [DeviceMapping] = []
     var activeDevicePresetName: String? = nil
     var activeAddOnPresetName: String? = nil
@@ -128,7 +131,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, DeviceMonito
             }
         }
         fileWatcher.start()
-        
+
+        // Watch the preset directories too, so editing a preset file directly
+        // (atomic saves show up as directory entry changes) hot-reloads the
+        // active configuration just like editing config.txt does.
+        devicePresetWatcher = FileWatcher(path: expandedDevicePresetDirectoryPath) { [weak self] in
+            self?.schedulePresetReload()
+        }
+        devicePresetWatcher?.start()
+        addOnPresetWatcher = FileWatcher(path: expandedAddOnPresetDirectoryPath) { [weak self] in
+            self?.schedulePresetReload()
+        }
+        addOnPresetWatcher?.start()
+
         // Load initial config
         loadConfig()
         startVolumeRefreshTimer()
@@ -152,6 +167,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, DeviceMonito
     
     func applicationWillTerminate(_ notification: Notification) {
         deviceChangeDebounceTask?.cancel()
+        presetReloadDebounceTask?.cancel()
+        devicePresetWatcher?.stop()
+        addOnPresetWatcher?.stop()
         diagnosticsRefreshTimer?.invalidate()
         volumeRefreshGeneration &+= 1
         deviceMonitor.stopMonitoring()
@@ -242,6 +260,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, DeviceMonito
             if !fm.fileExists(atPath: destinationURL.path) {
                 try? fm.copyItem(at: sourceURL, to: destinationURL)
             }
+        }
+    }
+
+    /// Debounces preset-directory change events (an editor save can emit
+    /// several) into one config reload.
+    private func schedulePresetReload() {
+        presetReloadDebounceTask?.cancel()
+        presetReloadDebounceTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard let self, !Task.isCancelled else { return }
+            print(AppInfo.logPrefix("Preset files changed; reloading"))
+            self.loadConfig()
         }
     }
 
@@ -681,6 +711,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, DeviceMonito
             "silentSeconds: \(String(format: "%.1f", audioEngine.secondsSinceLastAudible()))",
             "lastAudiblePeak: \(String(format: "%.5f", audioEngine.lastAudiblePeak()))",
             "startCount: \(diagnostics.startCount)",
+            "seamlessStart: \(audioEngine.seamlessStartActive ? "true" : "false")",
             "engine: \(diagnostics.engineRunning ? "running" : "stopped")",
             "device: \(diagnostics.activeDeviceName ?? "Unknown")",
             "sampleRate: \(Int(diagnostics.sampleRate.rounded()))",
@@ -1183,6 +1214,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, DeviceMonito
     }
 
     private func writeHiddenTuningPreset(named presetName: String) throws {
+        // Our own write must not bounce back through the add-on directory
+        // watcher as a reload.
+        addOnPresetWatcher?.stop()
+        defer { addOnPresetWatcher?.start() }
         try FileManager.default.createDirectory(
             atPath: expandedAddOnPresetDirectoryPath,
             withIntermediateDirectories: true,
