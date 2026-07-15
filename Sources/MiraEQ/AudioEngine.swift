@@ -257,6 +257,10 @@ private struct DSPResources {
     // Scratch and IO interleave buffers (pre-allocated)
     let scratchBuffer: UnsafeMutablePointer<Float>
     let scratchCapacity: Int
+    // Unprocessed copy of the render input, used to crossfade dry/wet while
+    // the effect mix ramps in after a start.
+    let dryBuffer: UnsafeMutablePointer<Float>
+    let dryBufferCapacity: Int
     let ioInterleaveBuffer: UnsafeMutablePointer<Float>?
     let ioInterleaveCapacity: Int
     
@@ -306,6 +310,7 @@ nonisolated(unsafe) private var rtResourceCleanupInProgress = false
 @MainActor
 private func deallocateResources(_ ptr: UnsafeMutablePointer<DSPResources>) {
     ptr.pointee.scratchBuffer.deallocate()
+    ptr.pointee.dryBuffer.deallocate()
     ptr.pointee.ioInterleaveBuffer?.deallocate()
     ptr.pointee.lowpassState.deallocate()
     ptr.pointee.bassHarmonicsLowpassState2.deallocate()
@@ -388,6 +393,7 @@ private func setupResources(sampleRate: Double, channels: Int, ringBuf: AudioRin
     let surroundCapacity = max(1024, Int(sampleRate * 0.06))
     
     let scratch = UnsafeMutablePointer<Float>.allocate(capacity: preallocCapacity)
+    let dry = UnsafeMutablePointer<Float>.allocate(capacity: preallocCapacity)
     let interleave = UnsafeMutablePointer<Float>.allocate(capacity: preallocCapacity)
     let lp = UnsafeMutablePointer<Float>.allocate(capacity: lowpassCapacity)
     let lp2 = UnsafeMutablePointer<Float>.allocate(capacity: lowpassCapacity)
@@ -406,6 +412,7 @@ private func setupResources(sampleRate: Double, channels: Int, ringBuf: AudioRin
     let bcGain = UnsafeMutablePointer<Float>.allocate(capacity: lowpassCapacity)
 
     scratch.initialize(repeating: 0, count: preallocCapacity)
+    dry.initialize(repeating: 0, count: preallocCapacity)
     interleave.initialize(repeating: 0, count: preallocCapacity)
     lp.initialize(repeating: 0, count: lowpassCapacity)
     lp2.initialize(repeating: 0, count: lowpassCapacity)
@@ -442,6 +449,8 @@ private func setupResources(sampleRate: Double, channels: Int, ringBuf: AudioRin
         ringBuffer: ringBufUnmanaged,
         scratchBuffer: scratch,
         scratchCapacity: preallocCapacity,
+        dryBuffer: dry,
+        dryBufferCapacity: preallocCapacity,
         ioInterleaveBuffer: interleave,
         ioInterleaveCapacity: preallocCapacity,
         lowpassState: lp,
@@ -505,7 +514,26 @@ private let rtNeedsPriming = ManagedAtomic<UInt32>(1)
 // mach_absolute_time of the last tapped buffer that contained audible samples.
 // Written by the IO callback, read on the main actor for auto-standby.
 private let rtLastAudibleHostTime = ManagedAtomic<UInt64>(0)
-private let audibleSampleThreshold: Float = 0.000_1
+// -60 dBFS: high enough to ignore mixer noise floor / dither that some
+// processes emit while "silent", low enough to catch real playback.
+private let audibleSampleThreshold: Float = 0.001
+
+// Global dry/wet mix for the custom DSP chain (0 = bypass, 1 = full effects).
+// Ramped on the main actor after each engine start so processing fades in
+// instead of snapping on; read by the render callback.
+private let rtEffectMixBits = ManagedAtomic<UInt32>(Float(1).bitPattern)
+// Peak of the most recent audible input buffer, for diagnostics.
+private let rtLastAudiblePeakBits = ManagedAtomic<UInt32>(0)
+
+private func loadEffectMix() -> Float {
+    let value = Float(bitPattern: rtEffectMixBits.load(ordering: .relaxed))
+    guard value.isFinite else { return 1 }
+    return min(max(value, 0), 1)
+}
+
+private func storeEffectMix(_ mix: Float) {
+    rtEffectMixBits.store(min(max(mix, 0), 1).bitPattern, ordering: .relaxed)
+}
 
 private let machTimebaseInfo: mach_timebase_info_data_t = {
     var info = mach_timebase_info_data_t()
@@ -607,7 +635,20 @@ private func renderCallback(
         memset(scratch.advanced(by: read), 0, missingSamples * MemoryLayout<Float>.size)
     }
 
-    applyRealtimeEffects(scratch, frames: frames, channels: ch, config: config, resources: resourcesPtr)
+    let effectMix = loadEffectMix()
+    if effectMix < 0.999, resourcesPtr.pointee.dryBufferCapacity >= interleavedCount {
+        // Fade-in after start: keep the DSP state advancing, but crossfade the
+        // custom-chain output with the untouched input.
+        let dry = resourcesPtr.pointee.dryBuffer
+        memcpy(dry, scratch, interleavedCount * MemoryLayout<Float>.size)
+        applyRealtimeEffects(scratch, frames: frames, channels: ch, config: config, resources: resourcesPtr)
+        let dryGain = 1 - effectMix
+        for sampleIndex in 0..<interleavedCount {
+            scratch[sampleIndex] = dry[sampleIndex] * dryGain + scratch[sampleIndex] * effectMix
+        }
+    } else {
+        applyRealtimeEffects(scratch, frames: frames, channels: ch, config: config, resources: resourcesPtr)
+    }
 
     for i in 0..<bufferList.count {
         guard i < ch else { break }
@@ -686,6 +727,11 @@ private func modeledRearShadow(for surround: SurroundEffectConfig) -> Float {
 
 private func modeledSpatialStrength(for surround: SurroundEffectConfig) -> Float {
     min(max(surround.spatialStrengthPercent / 100, 0.60), 1.40)
+}
+
+private func modeledReverbWetDryMix(for surround: SurroundEffectConfig) -> Float {
+    let spatialStrength = modeledSpatialStrength(for: surround)
+    return min(max(surround.reverbMix * (0.90 + spatialStrength * 0.10), 0), 50)
 }
 
 private func applyRealtimeEffects(
@@ -1097,16 +1143,42 @@ private func readOutputMute(deviceID: AudioObjectID) -> Bool {
     return status == noErr && muted != 0
 }
 
-private func deviceIsRunningSomewhere(deviceID: AudioObjectID) -> Bool {
-    var address = AudioObjectPropertyAddress(
-        mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
+/// The set of process objects currently emitting audio output. Unlike
+/// kAudioDevicePropertyDeviceIsRunningSomewhere (which stays true whenever any
+/// client merely holds the device open), IsRunningOutput only reports live
+/// playback, so playback start/stop edges are visible without needing a tap.
+private func runningOutputProcessObjects() -> Set<AudioObjectID> {
+    var listAddress = AudioObjectPropertyAddress(
+        mSelector: kAudioHardwarePropertyProcessObjectList,
         mScope: kAudioObjectPropertyScopeGlobal,
         mElement: kAudioObjectPropertyElementMain
     )
-    var running: UInt32 = 0
-    var size = UInt32(MemoryLayout<UInt32>.size)
-    let status = AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &running)
-    return status == noErr && running != 0
+    var dataSize: UInt32 = 0
+    guard AudioObjectGetPropertyDataSize(
+        AudioObjectID(kAudioObjectSystemObject), &listAddress, 0, nil, &dataSize
+    ) == noErr, dataSize > 0 else { return [] }
+
+    let count = Int(dataSize) / MemoryLayout<AudioObjectID>.size
+    var processObjects = [AudioObjectID](repeating: AudioObjectID(kAudioObjectUnknown), count: count)
+    guard AudioObjectGetPropertyData(
+        AudioObjectID(kAudioObjectSystemObject), &listAddress, 0, nil, &dataSize, &processObjects
+    ) == noErr else { return [] }
+
+    var runningAddress = AudioObjectPropertyAddress(
+        mSelector: kAudioProcessPropertyIsRunningOutput,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+    )
+    var running: Set<AudioObjectID> = []
+    for processObject in processObjects where processObject != kAudioObjectUnknown {
+        var isRunning: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        if AudioObjectGetPropertyData(processObject, &runningAddress, 0, nil, &size, &isRunning) == noErr,
+           isRunning != 0 {
+            running.insert(processObject)
+        }
+    }
+    return running
 }
 
 private struct AudioBufferFrameSizeRestorePoint {
@@ -1267,12 +1339,15 @@ public final class AudioEngineManager {
     private var startCount: UInt64 = 0
     private var lifecycleGeneration: UInt64 = 0
     private var pendingStartTask: Task<Void, Never>?
+    private var effectFadeTask: Task<Void, Never>?
+    private var standbyPollTask: Task<Void, Never>?
 
     // Auto-standby: engine torn down while playback is silent so the system
     // audio-capture indicator disappears; device/config kept for resume.
     public private(set) var isInStandby = false
     private var standbyDeviceID: AudioObjectID?
     private var standbyConfig: EQConfig?
+    private var standbyBaselinePlayers: Set<AudioObjectID> = []
     private let autoStandbySilenceSeconds: Double = 10
 
     /// Called on the main actor whenever a serialized start/stop/standby
@@ -1399,36 +1474,122 @@ public final class AudioEngineManager {
         pendingStartTask = task
     }
 
-    /// Evaluates auto-standby transitions. Returns true when the state changed.
+    /// Evaluates auto-standby entry. Returns true when the state changed.
+    /// Resume is handled by a faster dedicated poll (startStandbyPolling).
     public func updateAutoStandby() -> Bool {
-        if isActive {
-            guard let deviceID = activeDeviceID, let config = currentConfig else { return false }
-            let muted = readOutputMute(deviceID: deviceID)
-            let volumeIsZero = outputVolumeScalar <= 0.000_1
-            let silentForSeconds = secondsSinceLastAudibleAudio()
-            if muted || volumeIsZero || silentForSeconds >= autoStandbySilenceSeconds {
-                os_log(.default, log: appLog,
-                       "%{public}s entering standby (muted: %d, volumeZero: %d, silentSeconds: %.1f)",
-                       AppInfo.displayName, muted ? 1 : 0, volumeIsZero ? 1 : 0, silentForSeconds)
-                stop()
-                standbyDeviceID = deviceID
-                standbyConfig = config
-                isInStandby = true
-                return true
-            }
-            return false
-        }
-
-        if isInStandby, let deviceID = standbyDeviceID, let config = standbyConfig {
-            let muted = readOutputMute(deviceID: deviceID)
-            let volume = readOutputVolumeScalar(deviceID: deviceID) ?? 0
-            if !muted, volume > 0.000_1, deviceIsRunningSomewhere(deviceID: deviceID) {
-                os_log(.default, log: appLog, "%{public}s resuming from standby", AppInfo.displayName)
-                requestStart(outputDeviceID: deviceID, config: config)
-                return true
-            }
+        guard isActive, let deviceID = activeDeviceID, let config = currentConfig else { return false }
+        let muted = readOutputMute(deviceID: deviceID)
+        let volumeIsZero = outputVolumeScalar <= 0.000_1
+        let silentForSeconds = secondsSinceLastAudibleAudio()
+        if muted || volumeIsZero || silentForSeconds >= autoStandbySilenceSeconds {
+            os_log(.default, log: appLog,
+                   "%{public}s entering standby (muted: %d, volumeZero: %d, silentSeconds: %.1f)",
+                   AppInfo.displayName, muted ? 1 : 0, volumeIsZero ? 1 : 0, silentForSeconds)
+            stop()
+            standbyDeviceID = deviceID
+            standbyConfig = config
+            isInStandby = true
+            // Processes already emitting (silent) output when we entered
+            // standby (e.g. a browser holding an idle audio stream) must not
+            // count as a resume signal; only a playback start edge should.
+            // When we stopped because of mute/zero volume the user may still
+            // have something playing, so keep the baseline empty there and let
+            // unmuting resume immediately.
+            standbyBaselinePlayers = (muted || volumeIsZero) ? [] : runningOutputProcessObjects()
+            startStandbyPolling()
+            return true
         }
         return false
+    }
+
+    /// While in standby, watch the output device every 100 ms so processing
+    /// resumes almost immediately when playback restarts. The check is two
+    /// cheap HAL property reads.
+    private func startStandbyPolling() {
+        standbyPollTask?.cancel()
+        standbyPollTask = Task { @MainActor [weak self] in
+            // Grace period: right after we tear the engine down the output
+            // device still reports "running somewhere" for a moment, which
+            // would resume us instantly and loop standby/start forever.
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            while !Task.isCancelled {
+                guard let self, self.isInStandby else { return }
+                if self.tryResumeFromStandby() { return }
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+        }
+    }
+
+    /// Manual wake, e.g. from the menu: restarts processing immediately
+    /// regardless of playback state.
+    public func wakeFromStandbyNow() {
+        guard isInStandby, let deviceID = standbyDeviceID, let config = standbyConfig else { return }
+        os_log(.default, log: appLog, "%{public}s waking from standby (manual)", AppInfo.displayName)
+        requestStart(outputDeviceID: deviceID, config: config)
+    }
+
+    private func tryResumeFromStandby() -> Bool {
+        guard isInStandby, let deviceID = standbyDeviceID, let config = standbyConfig else { return false }
+
+        let playersNow = runningOutputProcessObjects()
+        // A baseline process that stops releases its exemption, so its next
+        // playback start (a pause -> play in the same app) triggers resume.
+        standbyBaselinePlayers.formIntersection(playersNow)
+        let hasNewPlayer = !playersNow.subtracting(standbyBaselinePlayers).isEmpty
+
+        let muted = readOutputMute(deviceID: deviceID)
+        let volume = readOutputVolumeScalar(deviceID: deviceID) ?? 0
+        guard !muted, volume > 0.000_1, hasNewPlayer else { return false }
+        os_log(.default, log: appLog, "%{public}s resuming from standby", AppInfo.displayName)
+        requestStart(outputDeviceID: deviceID, config: config)
+        return true
+    }
+
+    /// Ramps processing from bypass to fully applied over ~1.2 s after a
+    /// start, so effects blend in instead of snapping on. Covers both the
+    /// custom DSP chain (atomic dry/wet mix read by the render callback) and
+    /// the AVAudioEngine nodes (EQ gains, delay/reverb wet mix).
+    private func beginEffectFadeIn(durationSeconds: Double = 1.2) {
+        effectFadeTask?.cancel()
+        storeEffectMix(0)
+        applyEffectMixToNodes(0)
+        effectFadeTask = Task { @MainActor [weak self] in
+            let steps = 24
+            let stepNanoseconds = UInt64(durationSeconds / Double(steps) * 1_000_000_000)
+            for step in 1...steps {
+                try? await Task.sleep(nanoseconds: stepNanoseconds)
+                guard let self, !Task.isCancelled, self.isActive else { return }
+                let mix = Float(step) / Float(steps)
+                storeEffectMix(mix)
+                self.applyEffectMixToNodes(mix)
+            }
+        }
+    }
+
+    private func cancelEffectFadeIn() {
+        effectFadeTask?.cancel()
+        effectFadeTask = nil
+        storeEffectMix(1)
+    }
+
+    private func applyEffectMixToNodes(_ mix: Float) {
+        guard let config = currentConfig else { return }
+        if let eqNode {
+            eqNode.globalGain = config.preamp * mix
+            for i in 0..<min(eqNode.bands.count, config.bands.count) {
+                eqNode.bands[i].gain = config.bands[i].gain * mix
+            }
+        }
+        delayNode?.wetDryMix = config.effects.delay.mix * mix
+        reverbNode?.wetDryMix = modeledReverbWetDryMix(for: config.effects.surround) * mix
+    }
+
+    public func secondsSinceLastAudible() -> Double {
+        secondsSinceLastAudibleAudio()
+    }
+
+    public func lastAudiblePeak() -> Float {
+        Float(bitPattern: rtLastAudiblePeakBits.load(ordering: .relaxed))
     }
 
     private func secondsSinceLastAudibleAudio() -> Double {
@@ -1722,6 +1883,7 @@ public final class AudioEngineManager {
                     }
                     if peak > audibleSampleThreshold {
                         rtLastAudibleHostTime.store(mach_absolute_time(), ordering: .relaxed)
+                        rtLastAudiblePeakBits.store(peak.bitPattern, ordering: .relaxed)
                     }
                     let dropped = ringBuf.write(interleavedSource, count: totalSamples)
                     if dropped > 0 {
@@ -1768,6 +1930,7 @@ public final class AudioEngineManager {
                     }
                     if peak > audibleSampleThreshold {
                         rtLastAudibleHostTime.store(mach_absolute_time(), ordering: .relaxed)
+                        rtLastAudiblePeakBits.store(peak.bitPattern, ordering: .relaxed)
                     }
                     let dropped = ringBuf.write(interleaveBuf, count: totalSamples)
                     if dropped > 0 {
@@ -1804,6 +1967,9 @@ public final class AudioEngineManager {
             try checkCurrentLifecycle(generation)
 
             // Start playback after the producer has had a short chance to fill the jitter buffer.
+            // Begin with effects bypassed; the fade-in ramp brings them up after start.
+            storeEffectMix(0)
+            applyEffectMixToNodes(0)
             try avEngine.start()
             self.engine = avEngine
 
@@ -1812,6 +1978,7 @@ public final class AudioEngineManager {
             self.startedAt = Date()
             self.startCount &+= 1
             rtLastAudibleHostTime.store(mach_absolute_time(), ordering: .relaxed)
+            beginEffectFadeIn()
             os_log(.default, log: appLog, "%{public}s started and tapping audio for: %{public}s", AppInfo.displayName, deviceName)
 
         } catch is AudioEngineStartCancellation {
@@ -1837,6 +2004,7 @@ public final class AudioEngineManager {
     
     public func stop() {
         pendingStartTask?.cancel()
+        standbyPollTask?.cancel()
         isInStandby = false
         standbyDeviceID = nil
         standbyConfig = nil
@@ -1851,7 +2019,8 @@ public final class AudioEngineManager {
                 || tapID != AudioObjectID(kAudioObjectUnknown)
                 || aggregateDeviceID != AudioObjectID(kAudioObjectUnknown) else { return }
         os_log(.default, log: appLog, "Stopping %{public}s...", AppInfo.displayName)
-        
+        cancelEffectFadeIn()
+
         // 1. Stop IOProc first (stops producer thread)
         if let procID, aggregateDeviceID != AudioObjectID(kAudioObjectUnknown) {
             AudioDeviceStop(aggregateDeviceID, procID)
@@ -1918,6 +2087,8 @@ public final class AudioEngineManager {
     public func updateConfig(_ config: EQConfig) {
         self.currentConfig = config
         if isActive {
+            // A live config change lands at full strength; abandon any fade.
+            cancelEffectFadeIn()
             applyConfigToNodes(config)
             os_log(.default, log: appLog, "%{public}s updated configuration.", AppInfo.displayName)
         }
@@ -1951,9 +2122,8 @@ public final class AudioEngineManager {
         let modeledRearDelayMs = modeledRearDelayMilliseconds(for: surround)
         let modeledShadow = modeledRearShadow(for: surround)
         let modeledWidth = min(max(surround.width * (0.85 + spatialStrength * 0.15), 0), 100)
-        let modeledReverbMix = min(max(surround.reverbMix * (0.90 + spatialStrength * 0.10), 0), 50)
 
-        reverbNode?.wetDryMix = modeledReverbMix
+        reverbNode?.wetDryMix = modeledReverbWetDryMix(for: surround)
 
         let sampleRate: Float
         let delayCapacity: Int

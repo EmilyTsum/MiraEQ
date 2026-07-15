@@ -408,6 +408,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, DeviceMonito
         
         menu.addItem(.separator())
 
+        if audioEngine.isInStandby {
+            let wakeItem = NSMenuItem(title: "Wake from Standby", action: #selector(wakeFromStandby), keyEquivalent: "")
+            wakeItem.target = self
+            menu.addItem(wakeItem)
+        }
+
         let restartItem = NSMenuItem(title: "Restart Audio Processing", action: #selector(restartAudioProcessing), keyEquivalent: "")
         restartItem.target = self
         restartItem.isEnabled = audioEngine.isActive && audioEngine.canRestart
@@ -421,7 +427,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, DeviceMonito
         
         menu.addItem(.separator())
         
-        let presetItem = NSMenuItem(title: "Device Preset", action: nil, keyEquivalent: "")
+        // Explain the per-device model right in the menu: an EQ preset turns
+        // processing on for this device; every setting below is stored per
+        // device and re-applied whenever this device becomes active.
+        let scopeHint = disabledMenuItem(
+            title: activeDevicePresetName == nil
+                ? "This device is bypassed — choose an EQ preset to enable processing"
+                : "EQ + Processing below apply to this device only"
+        )
+        menu.addItem(scopeHint)
+
+        let presetItem = NSMenuItem(title: "EQ Preset (This Device)", action: nil, keyEquivalent: "")
         presetItem.submenu = makePresetMenu(
             directory: expandedDevicePresetDirectoryPath,
             activePreset: activeDevicePresetName
@@ -429,9 +445,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, DeviceMonito
         presetItem.isEnabled = (activeDeviceID != 0)
         menu.addItem(presetItem)
 
-        let processingItem = NSMenuItem(title: "Processing", action: nil, keyEquivalent: "")
+        let processingItem = NSMenuItem(title: "Processing (This Device)", action: nil, keyEquivalent: "")
         processingItem.submenu = makeProcessingMenu()
-        processingItem.isEnabled = (activeDeviceID != 0)
+        // Processing settings are stored alongside the active preset; without
+        // a preset there is nothing to attach them to, so keep this disabled.
+        processingItem.isEnabled = (activeDeviceID != 0 && activeDevicePresetName != nil)
         menu.addItem(processingItem)
 
         let advancedItem = NSMenuItem(title: "Advanced", action: nil, keyEquivalent: "")
@@ -644,6 +662,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, DeviceMonito
             "updated: \(updatedAt)",
             "",
             "active: \(diagnostics.isActive ? "true" : "false")",
+            "silentSeconds: \(String(format: "%.1f", audioEngine.secondsSinceLastAudible()))",
+            "lastAudiblePeak: \(String(format: "%.5f", audioEngine.lastAudiblePeak()))",
             "engine: \(diagnostics.engineRunning ? "running" : "stopped")",
             "device: \(diagnostics.activeDeviceName ?? "Unknown")",
             "sampleRate: \(Int(diagnostics.sampleRate.rounded()))",
@@ -724,7 +744,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, DeviceMonito
     private func makePresetMenu(directory: String, activePreset: String?) -> NSMenu {
         let presetMenu = NSMenu()
 
-        let bypassItem = NSMenuItem(title: "None", action: #selector(selectPresetItem(_:)), keyEquivalent: "")
+        let bypassItem = NSMenuItem(title: "None (Bypass This Device)", action: #selector(selectPresetItem(_:)), keyEquivalent: "")
         bypassItem.target = self
         bypassItem.representedObject = PresetSelection(presetFile: nil)
         bypassItem.state = (activePreset == nil) ? .on : .off
@@ -775,6 +795,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, DeviceMonito
 
     private func makeProcessingMenu() -> NSMenu {
         let menu = NSMenu()
+        menu.addItem(disabledMenuItem(title: "Saved for: \(activeDeviceName)"))
         menu.addItem(disabledMenuItem(title: "Pipeline: 32-bit float, final compressor + peak limiter"))
         menu.addItem(.separator())
 
@@ -1292,6 +1313,10 @@ extension AppDelegate {
     
     @objc func manualReload() {
         loadConfig()
+    }
+
+    @objc func wakeFromStandby() {
+        audioEngine.wakeFromStandbyNow()
     }
 
     @objc func restartAudioProcessing() {
