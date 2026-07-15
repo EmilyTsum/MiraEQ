@@ -1,0 +1,14 @@
+# MiraEq Preset: MacBook Air 13 Reference Flat
+# Designed to flatten the frequency response based on acoustics measurements.
+# It reduces the 1.2kHz boxy mid-range resonance and corrects the 4kHz treble dip.
+DeviceName: Speakers
+Preamp: -2.5 dB
+
+Filter 1: ON PK Fc 80 Hz Gain 2.0 dB Q 1.5
+Filter 2: ON PK Fc 125 Hz Gain 1.0 dB Q 1.0
+Filter 3: ON PK Fc 350 Hz Gain -1.5 dB Q 1.0
+Filter 4: ON PK Fc 1200 Hz Gain -3.5 dB Q 1.5
+Filter 5: ON PK Fc 2500 Hz Gain -1.0 dB Q 1.0
+Filter 6: ON PK Fc 4000 Hz Gain 2.5 dB Q 1.5
+Filter 7: ON PK Fc 8000 Hz Gain 1.0 dB Q 1.0
+Filter 8: ON PK Fc 16000 Hz Gain -1.5 dB Q 2.0
