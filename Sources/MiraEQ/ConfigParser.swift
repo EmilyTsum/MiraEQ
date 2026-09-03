@@ -39,6 +39,8 @@ public struct EffectConfig: Equatable {
     public var latency: LatencyEffectConfig
     public var bassComp: BassCompEffectConfig
     public var softLimit: SoftLimitEffectConfig
+    public var bassMono: BassMonoEffectConfig
+    public var loudness: LoudnessEffectConfig
 
     public init(
         delay: DelayEffectConfig = DelayEffectConfig(),
@@ -48,7 +50,9 @@ public struct EffectConfig: Equatable {
         lowEndGuard: LowEndGuardEffectConfig = LowEndGuardEffectConfig(),
         latency: LatencyEffectConfig = LatencyEffectConfig(),
         bassComp: BassCompEffectConfig = BassCompEffectConfig(),
-        softLimit: SoftLimitEffectConfig = SoftLimitEffectConfig()
+        softLimit: SoftLimitEffectConfig = SoftLimitEffectConfig(),
+        bassMono: BassMonoEffectConfig = BassMonoEffectConfig(),
+        loudness: LoudnessEffectConfig = LoudnessEffectConfig()
     ) {
         self.delay = delay
         self.surround = surround
@@ -58,6 +62,8 @@ public struct EffectConfig: Equatable {
         self.latency = latency
         self.bassComp = bassComp
         self.softLimit = softLimit
+        self.bassMono = bassMono
+        self.loudness = loudness
     }
 
 }
@@ -215,6 +221,30 @@ public struct SoftLimitEffectConfig: Equatable {
 
     public var isEnabled: Bool {
         drivePercent > 0.0001
+    }
+}
+
+public struct BassMonoEffectConfig: Equatable {
+    public var cutoffHz: Float
+
+    public init(cutoffHz: Float = 0) {
+        self.cutoffHz = cutoffHz
+    }
+
+    public var isEnabled: Bool {
+        cutoffHz > 0.5
+    }
+}
+
+public struct LoudnessEffectConfig: Equatable {
+    public var amount: Float
+
+    public init(amount: Float = 0) {
+        self.amount = amount
+    }
+
+    public var isEnabled: Bool {
+        amount > 0.0001
     }
 }
 
@@ -473,6 +503,10 @@ public class ConfigParser {
         case "softlimit":
             effects.softLimit.drivePercent = clamped(values["drive"] ?? values["amount"] ?? values["mix"] ?? effects.softLimit.drivePercent, min: 0, max: 100)
             effects.softLimit.isSet = true
+        case "bassmono", "bass_mono", "lowmono":
+            effects.bassMono.cutoffHz = clamped(values["cutoff"] ?? values["cutoffhz"] ?? values["freq"] ?? effects.bassMono.cutoffHz, min: 0, max: 300)
+        case "loudness":
+            effects.loudness.amount = clamped(values["amount"] ?? values["mix"] ?? values["strength"] ?? effects.loudness.amount, min: 0, max: 100)
         default:
             warnings.append("Unknown effect '\(effectName)' in effect line: \(line)")
         }

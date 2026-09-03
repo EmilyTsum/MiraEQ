@@ -24,6 +24,37 @@ final class ConfigParserTests: XCTestCase {
         XCTAssertFalse(warnings.isEmpty)
     }
 
+    func testParseBassMonoAndLoudness() {
+        let content = """
+        Effect: BassMono cutoff 120 Hz
+        Effect: Loudness amount 50
+        """
+        let (config, warnings) = ConfigParser.parse(content: content)
+        XCTAssertTrue(warnings.isEmpty, "unexpected warnings: \(warnings)")
+        XCTAssertTrue(config.effects.bassMono.isEnabled)
+        XCTAssertEqual(config.effects.bassMono.cutoffHz, 120, accuracy: 0.01)
+        XCTAssertTrue(config.effects.loudness.isEnabled)
+        XCTAssertEqual(config.effects.loudness.amount, 50, accuracy: 0.01)
+    }
+
+    func testBassMonoAndLoudnessOffByDefault() {
+        let (config, warnings) = ConfigParser.parse(content: "Preamp: 0 dB\n")
+        XCTAssertTrue(warnings.isEmpty)
+        XCTAssertFalse(config.effects.bassMono.isEnabled)
+        XCTAssertFalse(config.effects.loudness.isEnabled)
+    }
+
+    func testBassMonoAndLoudnessClamping() {
+        let content = """
+        Effect: BassMono cutoff 900 Hz
+        Effect: Loudness amount 250
+        """
+        let (config, warnings) = ConfigParser.parse(content: content)
+        XCTAssertTrue(warnings.isEmpty)
+        XCTAssertLessThanOrEqual(config.effects.bassMono.cutoffHz, 300)
+        XCTAssertLessThanOrEqual(config.effects.loudness.amount, 100)
+    }
+
     func testParseRoutingRoundTrip() {
         let mappings = [
             DeviceMapping(pattern: "MacBook Air Speakers", devicePresetFile: "A.txt", addOnPresetFile: ".MiraEQ_X_Processing.txt"),

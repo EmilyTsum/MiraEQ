@@ -96,6 +96,9 @@ struct DSPConfig {
     let headHeightCm: Float
     let displayAngleDegrees: Float
     let spatialStrengthPercent: Float
+    // Felt-bass stages (0 = bypass)
+    let bassMonoCutoffHz: Float
+    let loudnessAmount: Float
 }
 
 let rtActiveConfig = ManagedAtomic<UnsafeMutablePointer<DSPConfig>?>(nil)
@@ -164,7 +167,9 @@ let fallbackDSPConfig = DSPConfig(
     listenerDistanceCm: SpatialTuning.default.listenerDistanceCm,
     headHeightCm: defaultSpatialHeadHeightCm,
     displayAngleDegrees: defaultSpatialDisplayAngleDegrees,
-    spatialStrengthPercent: SpatialTuning.default.strengthPercent
+    spatialStrengthPercent: SpatialTuning.default.strengthPercent,
+    bassMonoCutoffHz: 0,
+    loudnessAmount: 0
 )
 
 func currentFallbackConfig() -> DSPConfig {
@@ -259,6 +264,13 @@ struct DSPResources {
     let bassCompLowpassState2: UnsafeMutablePointer<Float>
     let bassCompEnvelopeState: UnsafeMutablePointer<Float>
     let bassCompGainState: UnsafeMutablePointer<Float>
+    // Felt-bass stage states (pre-allocated, mutated on the render thread)
+    let bassMonoLowpassState: UnsafeMutablePointer<Float>
+    let bassMonoLowpassStateCapacity: Int
+    let bassMonoTempBuffer: UnsafeMutablePointer<Float>
+    let bassMonoTempCapacity: Int
+    let loudnessLowpassState: UnsafeMutablePointer<Float>
+    let loudnessLowpassStateCapacity: Int
 
     // Rear surround delay lines and lowpass states
     let rearDelayLineLeft: UnsafeMutablePointer<Float>?
@@ -303,6 +315,9 @@ func deallocateResources(_ ptr: UnsafeMutablePointer<DSPResources>) {
     ptr.pointee.bassCompLowpassState2.deallocate()
     ptr.pointee.bassCompEnvelopeState.deallocate()
     ptr.pointee.bassCompGainState.deallocate()
+    ptr.pointee.bassMonoLowpassState.deallocate()
+    ptr.pointee.bassMonoTempBuffer.deallocate()
+    ptr.pointee.loudnessLowpassState.deallocate()
     ptr.pointee.rearDelayLineLeft?.deallocate()
     ptr.pointee.rearDelayLineRight?.deallocate()
 
@@ -386,6 +401,9 @@ func setupResources(sampleRate: Double, channels: Int, ringBuf: AudioRingBuffer)
     let bcLP2 = UnsafeMutablePointer<Float>.allocate(capacity: lowpassCapacity)
     let bcEnv = UnsafeMutablePointer<Float>.allocate(capacity: lowpassCapacity)
     let bcGain = UnsafeMutablePointer<Float>.allocate(capacity: lowpassCapacity)
+    let monoLP = UnsafeMutablePointer<Float>.allocate(capacity: lowpassCapacity)
+    let monoTemp = UnsafeMutablePointer<Float>.allocate(capacity: lowpassCapacity)
+    let loudLP = UnsafeMutablePointer<Float>.allocate(capacity: lowpassCapacity)
 
     scratch.initialize(repeating: 0, count: preallocCapacity)
     dry.initialize(repeating: 0, count: preallocCapacity)
@@ -405,6 +423,9 @@ func setupResources(sampleRate: Double, channels: Int, ringBuf: AudioRingBuffer)
     bcLP2.initialize(repeating: 0, count: lowpassCapacity)
     bcEnv.initialize(repeating: 0, count: lowpassCapacity)
     bcGain.initialize(repeating: 1, count: lowpassCapacity)
+    monoLP.initialize(repeating: 0, count: lowpassCapacity)
+    monoTemp.initialize(repeating: 0, count: lowpassCapacity)
+    loudLP.initialize(repeating: 0, count: lowpassCapacity)
 
     var delayL: UnsafeMutablePointer<Float>? = nil
     var delayR: UnsafeMutablePointer<Float>? = nil
@@ -447,6 +468,12 @@ func setupResources(sampleRate: Double, channels: Int, ringBuf: AudioRingBuffer)
         bassCompLowpassState2: bcLP2,
         bassCompEnvelopeState: bcEnv,
         bassCompGainState: bcGain,
+        bassMonoLowpassState: monoLP,
+        bassMonoLowpassStateCapacity: lowpassCapacity,
+        bassMonoTempBuffer: monoTemp,
+        bassMonoTempCapacity: lowpassCapacity,
+        loudnessLowpassState: loudLP,
+        loudnessLowpassStateCapacity: lowpassCapacity,
         rearDelayLineLeft: delayL,
         rearDelayLineRight: delayR,
         rearDelayLineCapacity: channels >= 2 ? surroundCapacity : 0,
@@ -703,6 +730,81 @@ func modeledReverbWetDryMix(for surround: SurroundEffectConfig) -> Float {
     return min(max(surround.reverbMix * (0.90 + spatialStrength * 0.10), 0), 50)
 }
 
+/// Folds low frequencies to mono: out-of-phase bass between left and right
+/// partly cancels on small speakers, sounding thin. Summing the lows keeps
+/// the energy and makes kick/bass feel tighter. Frequencies above the cutoff
+/// keep their stereo image untouched.
+func applyBassMono(
+    _ samples: UnsafeMutablePointer<Float>,
+    frames: Int,
+    channels: Int,
+    config: DSPConfig,
+    resources: UnsafeMutablePointer<DSPResources>
+) {
+    guard channels >= 2,
+          config.bassMonoCutoffHz > 0.5,
+          resources.pointee.bassMonoLowpassStateCapacity >= channels,
+          resources.pointee.bassMonoTempCapacity >= channels else { return }
+
+    let cutoff = min(max(config.bassMonoCutoffHz, 40), 300)
+    let alpha = min(max((2 * Float.pi * cutoff) / (2 * Float.pi * cutoff + config.sampleRate), 0.003), 0.5)
+    let lowpassState = resources.pointee.bassMonoLowpassState
+    let temp = resources.pointee.bassMonoTempBuffer
+    let channelDivisor = Float(channels)
+
+    for frame in 0..<frames {
+        let base = frame * channels
+        var monoSum: Float = 0
+        for channel in 0..<channels {
+            let index = base + channel
+            let low = lowpassState[channel] + alpha * (samples[index] - lowpassState[channel])
+            lowpassState[channel] = low
+            temp[channel] = low
+            monoSum += low
+        }
+        let monoLow = monoSum / channelDivisor
+        for channel in 0..<channels {
+            let index = base + channel
+            samples[index] = (samples[index] - temp[channel]) + monoLow
+        }
+    }
+}
+
+/// Loudness compensation: human hearing is much less sensitive to bass at low
+/// volumes (Fletcher-Munson), so quiet listening feels thin. This lifts the
+/// lows progressively as the system volume drops, fading to zero near maximum
+/// volume where no lift is needed (and headroom is scarcest).
+func applyLoudness(
+    _ samples: UnsafeMutablePointer<Float>,
+    frames: Int,
+    channels: Int,
+    config: DSPConfig,
+    resources: UnsafeMutablePointer<DSPResources>
+) {
+    guard frames > 0, channels > 0, config.loudnessAmount > 0.0001 else { return }
+    guard resources.pointee.loudnessLowpassStateCapacity >= channels else { return }
+
+    let volume = loadRealtimeOutputVolumeScalar()
+    let depth = 1 - smoothstep(edge0: 0.25, edge1: 0.85, x: volume)
+    // amount 0-100 maps to 0 to +6 dB of extra lows at minimum volume.
+    let boost = min(max(config.loudnessAmount / 100, 0), 1) * depth
+    guard boost > 0.0001 else { return }
+
+    let lowpassState = resources.pointee.loudnessLowpassState
+    let cutoff: Float = 180
+    let alpha = min(max((2 * Float.pi * cutoff) / (2 * Float.pi * cutoff + config.sampleRate), 0.003), 0.12)
+
+    for frame in 0..<frames {
+        for channel in 0..<channels {
+            let index = frame * channels + channel
+            let input = samples[index]
+            let low = lowpassState[channel] + alpha * (input - lowpassState[channel])
+            lowpassState[channel] = low
+            samples[index] = input + low * boost
+        }
+    }
+}
+
 func applyRealtimeEffects(
     _ samples: UnsafeMutablePointer<Float>,
     frames: Int,
@@ -710,6 +812,11 @@ func applyRealtimeEffects(
     config: DSPConfig,
     resources: UnsafeMutablePointer<DSPResources>
 ) {
+    // Mono-ize the lows first so every downstream stage (comp, harmonics,
+    // guard) works on summed low energy instead of partially cancelling
+    // out-of-phase bass between left and right.
+    applyBassMono(samples, frames: frames, channels: channels, config: config, resources: resources)
+
     if config.bassCompAmount > 0.0001, resources.pointee.lowpassStateCapacity >= channels {
         let lowpass = config.bassCompLowpass
         let state1 = resources.pointee.bassCompLowpassState1
@@ -750,6 +857,10 @@ func applyRealtimeEffects(
             }
         }
     }
+
+    // Loudness lift next: quiet-volume low boost before harmonics are
+    // derived, so the generated harmonics also benefit from the lift.
+    applyLoudness(samples, frames: frames, channels: channels, config: config, resources: resources)
 
     if config.bassHarmonicsAmount > 0.0001, resources.pointee.lowpassStateCapacity >= channels {
         let lowpassState1 = resources.pointee.lowpassState

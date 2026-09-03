@@ -159,6 +159,8 @@ func printEffectiveConfig(_ config: EQConfig) {
     print("bassComp.isSet: \(config.effects.bassComp.isSet)")
     print("softLimit.drivePercent: \(config.effects.softLimit.drivePercent)")
     print("softLimit.isSet: \(config.effects.softLimit.isSet)")
+    print("bassMono.cutoffHz: \(config.effects.bassMono.cutoffHz)")
+    print("loudness.amount: \(config.effects.loudness.amount)")
     print("bands.count: \(config.bands.count)")
 }
 

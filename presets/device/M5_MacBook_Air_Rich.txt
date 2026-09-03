@@ -5,20 +5,27 @@
 # 2026-07-15: +weight revision — more 64-250 Hz body, softer 500 Hz cut.
 # Preamp lowered to -5.5 dB for headroom (max gain +4.0 dB at 125 Hz plus
 # restored low-mid energy).
+# 2026-09-03: relative-bass revision — everything above 180 Hz cut by another
+# 2.5 dB so 64-180 Hz sits ~+2.5 dB relative without touching bass gains or
+# preamp (headroom unchanged, max gain still +4.0 dB at 125 Hz).
+# Preamp raised to -4.0 dB (peak 0 dB at max boost; dynamics + limiter
+# downstream absorb overs).
 DeviceName: Speakers
-Preamp: -5.5 dB
+Preamp: -4.0 dB
 
 Effect: BassHarmonics amount 6 cutoff 135 Hz
 Effect: LowEndGuard amount 45 threshold -18 dB cutoff 180 Hz ratio 4 maxReduction 5.0 dB
+Effect: BassMono cutoff 120 Hz
+Effect: Loudness amount 50
 
 Filter 1: ON PK Fc 32 Hz Gain 0.0 dB Bandwidth 1.00
 Filter 2: ON PK Fc 64 Hz Gain 2.20 dB Bandwidth 2.54
 Filter 3: ON PK Fc 125 Hz Gain 4.00 dB Bandwidth 1.17
 Filter 4: ON PK Fc 180 Hz Gain 2.20 dB Bandwidth 1.20
-Filter 5: ON PK Fc 250 Hz Gain 0.00 dB Bandwidth 1.00
-Filter 6: ON PK Fc 500 Hz Gain -3.60 dB Bandwidth 1.00
-Filter 7: ON PK Fc 1000 Hz Gain -4.03 dB Bandwidth 1.00
-Filter 8: ON PK Fc 2000 Hz Gain -6.60 dB Bandwidth 1.00
-Filter 9: ON PK Fc 4000 Hz Gain -2.57 dB Bandwidth 1.00
-Filter 10: ON PK Fc 8000 Hz Gain -0.81 dB Bandwidth 1.00
-Filter 11: ON PK Fc 16000 Hz Gain -0.77 dB Bandwidth 1.00
+Filter 5: ON PK Fc 250 Hz Gain -3.50 dB Bandwidth 1.00
+Filter 6: ON PK Fc 500 Hz Gain -9.60 dB Bandwidth 1.00
+Filter 7: ON PK Fc 1000 Hz Gain -11.03 dB Bandwidth 1.00
+Filter 8: ON PK Fc 2000 Hz Gain -13.10 dB Bandwidth 1.00
+Filter 9: ON PK Fc 4000 Hz Gain -8.57 dB Bandwidth 1.00
+Filter 10: ON PK Fc 8000 Hz Gain -5.31 dB Bandwidth 1.00
+Filter 11: ON PK Fc 16000 Hz Gain -4.27 dB Bandwidth 1.00

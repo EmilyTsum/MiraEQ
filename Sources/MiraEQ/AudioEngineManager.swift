@@ -1022,6 +1022,8 @@ public final class AudioEngineManager {
         let bassCompMaxMakeupGain = powf(10, (6 * bassCompAmountNorm) / 20)
         let softLimitDriveGain = 1 + min(max(softLimitDrive / 100, 0), 1) * 0.6
         let maxRealtimeLatencySeconds = max(0.001, min(config.effects.latency.targetMs / 1000, 0.08))
+        let bassMonoCutoffHz = finiteClamped(config.effects.bassMono.cutoffHz, default: 0, min: 0, max: 300)
+        let loudnessAmount = finiteClamped(config.effects.loudness.amount, default: 0, min: 0, max: 100)
 
         let newConfig = DSPConfig(
             bassHarmonicsAmount: bassHarmonicsAmount,
@@ -1064,7 +1066,9 @@ public final class AudioEngineManager {
             listenerDistanceCm: listenerDistanceCm,
             headHeightCm: headHeightCm,
             displayAngleDegrees: displayAngleDegrees,
-            spatialStrengthPercent: spatialStrengthPercent
+            spatialStrengthPercent: spatialStrengthPercent,
+            bassMonoCutoffHz: bassMonoCutoffHz,
+            loudnessAmount: loudnessAmount
         )
 
         let newPtr = UnsafeMutablePointer<DSPConfig>.allocate(capacity: 1)
