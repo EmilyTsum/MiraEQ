@@ -44,7 +44,7 @@ public class FileWatcher {
                 # Format: DeviceNameOrUIDPattern = DevicePresetFile | HiddenProcessingPresetFile
                 # Use None as the device preset to bypass processing for that device.
                 # Example:
-                # MacBook Air Speakers = MacBook_Air_13_Balanced.txt | .MiraEQ_MacBook_Air_Speakers_Processing.txt
+                # MacBook Air Speakers = M5_MacBook_Air_Rich.txt | .MiraEQ_MacBook_Air_Speakers_Processing.txt
                 """
                 fm.createFile(atPath: path, contents: template.data(using: .utf8), attributes: nil)
             }

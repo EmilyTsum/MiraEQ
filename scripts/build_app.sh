@@ -23,10 +23,15 @@ cd "$ROOT"
 swift build -c release
 
 rm -rf "$OUT_DIR"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/presets/device"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/presets/device" "$APP/Contents/Resources/presets/addons"
 
 cp "$BUILD_DIR/MiraEQ" "$APP/Contents/MacOS/MiraEQ"
 cp "$ROOT"/presets/device/*.txt "$APP/Contents/Resources/presets/device/"
+# Hidden per-device processing presets are dotfiles, so the *.txt glob
+# above would miss them; copy them explicitly.
+for hidden in "$ROOT"/presets/addons/.*.txt "$ROOT"/presets/addons/*.txt; do
+    [ -f "$hidden" ] && cp "$hidden" "$APP/Contents/Resources/presets/addons/"
+done
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

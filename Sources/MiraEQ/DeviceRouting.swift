@@ -34,6 +34,28 @@ extension AppDelegate {
                 }
             }
         }
+
+        // Seed per-device processing presets (e.g. the tuned built-in speaker
+        // setup) on fresh installs. Existing files are never overwritten, so
+        // user edits always win.
+        for sourceDirectory in bundledAddOnPresetDirectories() {
+            guard let files = try? fm.contentsOfDirectory(at: sourceDirectory, includingPropertiesForKeys: nil) else {
+                continue
+            }
+
+            for sourceURL in files where sourceURL.pathExtension.lowercased() == "txt" {
+                let destinationURL = URL(fileURLWithPath: expandedAddOnPresetDirectoryPath)
+                    .appendingPathComponent(sourceURL.lastPathComponent)
+
+                guard !fm.fileExists(atPath: destinationURL.path) else { continue }
+
+                do {
+                    try fm.copyItem(at: sourceURL, to: destinationURL)
+                } catch {
+                    print(AppInfo.logPrefix("Failed to install processing preset \(sourceURL.lastPathComponent): \(error)"))
+                }
+            }
+        }
     }
 
     func bundledPresetDirectories() -> [URL] {
@@ -48,6 +70,22 @@ extension AppDelegate {
         directories.append(executableDirectory.appendingPathComponent("presets/device"))
         let workingDirectory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         directories.append(workingDirectory.appendingPathComponent("presets/device"))
+
+        return directories
+    }
+
+    func bundledAddOnPresetDirectories() -> [URL] {
+        var directories: [URL] = []
+
+        if let resourceURL = Bundle.main.resourceURL {
+            directories.append(resourceURL.appendingPathComponent("presets/addons"))
+        }
+
+        let executableDirectory = URL(fileURLWithPath: CommandLine.arguments[0])
+            .deletingLastPathComponent()
+        directories.append(executableDirectory.appendingPathComponent("presets/addons"))
+        let workingDirectory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        directories.append(workingDirectory.appendingPathComponent("presets/addons"))
 
         return directories
     }

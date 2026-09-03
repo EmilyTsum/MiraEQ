@@ -1,6 +1,0 @@
-# MiraEq Device Routing Configuration
-# Format: DeviceNameOrUIDPattern = DevicePresetFile | HiddenProcessingPresetFile
-# Use None as the device preset to bypass processing for that device.
-# Evaluation is top-to-bottom. First match wins.
-
-MacBook Air Speakers = M5_MacBook_Air_Rich.txt | .MiraEq_BuiltInSpeakerDevice_Processing.txt
