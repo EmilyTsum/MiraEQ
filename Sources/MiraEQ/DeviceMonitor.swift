@@ -16,6 +16,21 @@ public class DeviceMonitor {
     )
     
     public init() {}
+
+    deinit {
+        // Safety net: if stopMonitoring was never called, the HAL would keep
+        // the listener block (and this monitor) alive forever. Removal is
+        // thread-safe, so it is safe to do from deinit.
+        if let block = listenerBlock {
+            var address = propertyAddress
+            AudioObjectRemovePropertyListenerBlock(
+                AudioObjectID(kAudioObjectSystemObject),
+                &address,
+                .main,
+                block
+            )
+        }
+    }
     
     public func startMonitoring() {
         stopMonitoring()

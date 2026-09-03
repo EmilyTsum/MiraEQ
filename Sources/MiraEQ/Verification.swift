@@ -163,6 +163,10 @@ func printEffectiveConfig(_ config: EQConfig) {
 }
 
 private func configDirectory() -> URL {
-    FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".config/miraeq")
+    // Keep the path identical to the app runtime (AppInfo, case-sensitive).
+    // The previous hardcoded ".config/miraeq" (lowercase) mismatched
+    // AppInfo's "MiraEQ" and broke --print-effective-config on
+    // case-sensitive filesystems.
+    let expanded = (AppInfo.configDirectoryPath as NSString).expandingTildeInPath
+    return URL(fileURLWithPath: expanded, isDirectory: true)
 }

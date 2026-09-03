@@ -19,6 +19,10 @@ let package = Package(
             dependencies: [
                 .product(name: "Atomics", package: "swift-atomics")
             ]
+        ),
+        .testTarget(
+            name: "MiraEQTests",
+            dependencies: ["MiraEQ"]
         )
     ]
 )

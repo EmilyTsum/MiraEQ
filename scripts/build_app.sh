@@ -3,7 +3,16 @@
 # Usage: scripts/build_app.sh [version]
 set -euo pipefail
 
-VERSION="${1:-0.2.0}"
+VERSION="${1:-}"
+if [ -z "$VERSION" ]; then
+    # Prefer the latest git tag (vX.Y.Z) so the DMG version never drifts
+    # behind releases; fall back to a dev version for untagged checkouts.
+    if VERSION_FROM_GIT="$(git describe --tags --abbrev=0 2>/dev/null)"; then
+        VERSION="${VERSION_FROM_GIT#v}"
+    else
+        VERSION="0.0.0-dev"
+    fi
+fi
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_DIR="$ROOT/.build/release"
 OUT_DIR="$ROOT/dist"
@@ -41,7 +50,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleShortVersionString</key>
     <string>$VERSION</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>$VERSION</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.2</string>
     <key>LSUIElement</key>
@@ -62,6 +71,8 @@ STAGING="$OUT_DIR/dmg-staging"
 mkdir -p "$STAGING"
 cp -R "$APP" "$STAGING/"
 ln -s /Applications "$STAGING/Applications"
+# Keep Finder metadata out of the distributable.
+find "$STAGING" -name '.DS_Store' -delete || true
 hdiutil create -volname "MiraEQ" -srcfolder "$STAGING" -ov -format UDZO "$DMG" >/dev/null
 rm -rf "$STAGING"
 

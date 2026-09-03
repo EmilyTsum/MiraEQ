@@ -41,6 +41,8 @@ public final class AudioRingBuffer: @unchecked Sendable {
 
     @discardableResult
     public func write(_ data: UnsafePointer<Float>, count: Int) -> Int {
+        // Returns the number of samples DROPPED (not written) due to lack of
+        // free space. Returns 0 when everything was written.
         guard count > 0 else { return 0 }
 
         var w = _writeHead.load(ordering: .relaxed)
@@ -50,10 +52,14 @@ public final class AudioRingBuffer: @unchecked Sendable {
         let toWrite = min(count, freeSpace)
         guard toWrite > 0 else { return count }
 
-        for i in 0..<toWrite {
-            buffer[Int(w) & mask] = data[i]
-            w &+= 1
+        // Fast path: copy in up to two contiguous segments to handle wrap.
+        let writeIndex = Int(w) & mask
+        let firstSegment = min(toWrite, capacity - writeIndex)
+        buffer.advanced(by: writeIndex).update(from: data, count: firstSegment)
+        if toWrite > firstSegment {
+            buffer.update(from: data.advanced(by: firstSegment), count: toWrite - firstSegment)
         }
+        w &+= UInt64(toWrite)
         _writeHead.store(w, ordering: .releasing)
         return count - toWrite
     }
@@ -65,10 +71,15 @@ public final class AudioRingBuffer: @unchecked Sendable {
         var r = _readHead.load(ordering: .relaxed)
         let avail = Int(w &- r)
         let toRead = min(count, avail)
-        for i in 0..<toRead {
-            dest[i] = buffer[Int(r) & mask]
-            r &+= 1
+        guard toRead > 0 else { return 0 }
+
+        let readIndex = Int(r) & mask
+        let firstSegment = min(toRead, capacity - readIndex)
+        dest.update(from: buffer.advanced(by: readIndex), count: firstSegment)
+        if toRead > firstSegment {
+            dest.advanced(by: firstSegment).update(from: buffer, count: toRead - firstSegment)
         }
+        r &+= UInt64(toRead)
         _readHead.store(r, ordering: .releasing)
         return toRead
     }

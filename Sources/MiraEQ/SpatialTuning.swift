@@ -63,11 +63,3 @@ public extension SurroundEffectConfig {
         spatialModelIsSet = true
     }
 }
-
-private func clamped(_ value: Float, min minValue: Float, max maxValue: Float) -> Float {
-    max(minValue, min(value, maxValue))
-}
-
-private func clampedTuningValue(_ value: Float, min minValue: Float, max maxValue: Float) -> Float {
-    max(minValue, min(value, maxValue))
-}

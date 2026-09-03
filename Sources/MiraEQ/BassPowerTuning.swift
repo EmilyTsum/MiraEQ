@@ -79,7 +79,3 @@ public extension EQConfig {
         return tuned
     }
 }
-
-private func clampedTuningValue(_ value: Float, min minValue: Float, max maxValue: Float) -> Float {
-    max(minValue, min(value, maxValue))
-}

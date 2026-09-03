@@ -536,7 +536,7 @@ public class ConfigParser {
     }
 
     private static func clamped(_ value: Float, min minValue: Float, max maxValue: Float) -> Float {
-        max(minValue, min(value, maxValue))
+        clampTuning(value, min: minValue, max: maxValue)
     }
     
     private static func qToBandwidth(_ q: Float) -> Float {
