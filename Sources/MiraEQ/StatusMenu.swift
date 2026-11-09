@@ -3,13 +3,7 @@ import Foundation
 import CoreAudio
 import ServiceManagement
 
-// MARK: - Status Menu
-//
-// Menu-bar presentation only: menu construction, diagnostics rows, preset /
-// processing submenus, and menu actions. Behavior is unchanged from the
-// former monolithic MiraEQ.swift; the code was moved verbatim into this
-// extension, except that pausing now also releases the power assertion
-// (see updateRealtimeAudioActivity).
+// Menu construction and AppKit actions. Values reflect the effective route.
 
 extension AppDelegate {
     // MARK: - Menu Bar Delegate & UI
@@ -38,6 +32,9 @@ extension AppDelegate {
         deviceItem.isEnabled = false
         menu.addItem(deviceItem)
 
+        if let error = routing.lastError {
+            menu.addItem(disabledMenuItem(title: "Config: \(error.localizedDescription)"))
+        }
         addDiagnosticsItems(to: menu, diagnostics: diagnostics)
 
         menu.addItem(.separator())
@@ -50,13 +47,13 @@ extension AppDelegate {
 
         let restartItem = NSMenuItem(title: "Restart Audio Processing", action: #selector(restartAudioProcessing), keyEquivalent: "")
         restartItem.target = self
-        restartItem.isEnabled = audioEngine.isActive && audioEngine.canRestart
+        restartItem.isEnabled = routing.effectiveConfig != nil && !isAudioPausedByUser
         menu.addItem(restartItem)
 
         let pauseTitle = isAudioPausedByUser ? "Resume Audio Processing" : "Pause Audio Processing"
         let pauseItem = NSMenuItem(title: pauseTitle, action: #selector(toggleAudioProcessingPaused), keyEquivalent: "")
         pauseItem.target = self
-        pauseItem.isEnabled = audioEngine.isActive || audioEngine.isInStandby || isAudioPausedByUser
+        pauseItem.isEnabled = routing.effectiveConfig != nil || isAudioPausedByUser
         menu.addItem(pauseItem)
 
         // Mute / zero volume always stops capture; this only controls the
@@ -83,10 +80,7 @@ extension AppDelegate {
         menu.addItem(scopeHint)
 
         let presetItem = NSMenuItem(title: "EQ Preset (This Device)", action: nil, keyEquivalent: "")
-        presetItem.submenu = makePresetMenu(
-            directory: expandedDevicePresetDirectoryPath,
-            activePreset: activeDevicePresetName
-        )
+        presetItem.submenu = makePresetMenu(activePreset: activeDevicePresetName)
         presetItem.isEnabled = (activeDeviceID != 0)
         menu.addItem(presetItem)
 
@@ -289,7 +283,7 @@ extension AppDelegate {
         return "\(seconds)s"
     }
 
-    private func makePresetMenu(directory: String, activePreset: String?) -> NSMenu {
+    private func makePresetMenu(activePreset: String?) -> NSMenu {
         let presetMenu = NSMenu()
 
         let bypassItem = NSMenuItem(title: "None (Bypass This Device)", action: #selector(selectPresetItem(_:)), keyEquivalent: "")
@@ -299,52 +293,19 @@ extension AppDelegate {
         presetMenu.addItem(bypassItem)
         presetMenu.addItem(.separator())
 
-        let fm = FileManager.default
-        if let files = try? fm.contentsOfDirectory(atPath: directory) {
-            let txtFiles = files.filter { $0.hasSuffix(".txt") && $0.lowercased() != "config.txt" }.sorted()
-            for file in txtFiles {
-                let displayName = presetDisplayName(for: file, in: directory)
-                let item = NSMenuItem(title: displayName, action: #selector(selectPresetItem(_:)), keyEquivalent: "")
-                item.target = self
-                item.representedObject = PresetSelection(presetFile: file)
-                item.state = (activePreset == file) ? .on : .off
-                presetMenu.addItem(item)
-            }
+        for preset in routing.store.availableDevicePresets() {
+            let item = NSMenuItem(title: preset.title, action: #selector(selectPresetItem(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = PresetSelection(presetFile: preset.file)
+            item.state = activePreset == preset.file ? .on : .off
+            presetMenu.addItem(item)
         }
-
         return presetMenu
-    }
-
-    private func presetDisplayName(for file: String, in directory: String) -> String {
-        let presetPath = (directory as NSString).appendingPathComponent(file)
-        if let content = try? String(contentsOfFile: presetPath, encoding: .utf8) {
-            // Accept both the current and the legacy (pre-rename) title prefix.
-            let titlePrefixes = ["# MiraEQ Preset:", "# MiraEq Preset:"]
-            for titlePrefix in titlePrefixes {
-                if let titleLine = content.components(separatedBy: .newlines)
-                    .first(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix(titlePrefix) }) {
-                    let title = titleLine
-                        .replacingOccurrences(of: titlePrefix, with: "")
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !title.isEmpty {
-                        return title
-                    }
-                }
-            }
-        }
-
-        let baseName = (file as NSString).deletingPathExtension
-        let normalized = baseName
-            .replacingOccurrences(of: "_", with: " ")
-            .replacingOccurrences(of: "-", with: " ")
-            .replacingOccurrences(of: "  ", with: " ")
-        return normalized
     }
 
     private func makeProcessingMenu() -> NSMenu {
         let menu = NSMenu()
         menu.addItem(disabledMenuItem(title: "Saved for: \(activeDeviceName)"))
-        menu.addItem(disabledMenuItem(title: "Pipeline: 32-bit float, final compressor + peak limiter"))
         menu.addItem(.separator())
 
         let latencyItem = NSMenuItem(title: "Latency", action: nil, keyEquivalent: "")
@@ -372,7 +333,7 @@ extension AppDelegate {
         menu.addItem(bassPowerItem)
 
         menu.addItem(.separator())
-        let resetItem = NSMenuItem(title: "Reset Processing", action: #selector(selectProcessingTuningItem(_:)), keyEquivalent: "")
+        let resetItem = NSMenuItem(title: "Reset Processing to Preset", action: #selector(selectProcessingTuningItem(_:)), keyEquivalent: "")
         resetItem.target = self
         resetItem.representedObject = ProcessingTuningSelection(component: .reset, latencyMode: nil, boolValue: false, amountPercent: 0)
         menu.addItem(resetItem)
@@ -463,17 +424,17 @@ extension AppDelegate {
 
         switch component {
         case .latency:
-            item.state = processingTuning.latencyMode == latencyMode ? .on : .off
+            item.state = latencyMode.map { abs(currentEffects.latency.targetMs - $0.targetMs) < 0.01 } == true ? .on : .off
         case .spatialEnabled:
-            item.state = processingTuning.spatialEnabled == boolValue ? .on : .off
+            item.state = (currentEffects.surround.isEnabled || currentEffects.delay.isEnabled) == boolValue ? .on : .off
         case .bassHarmonics:
-            item.state = abs(processingTuning.bassHarmonicsAmount - amountPercent) < 0.5 ? .on : .off
+            item.state = abs(currentEffects.bassHarmonics.amount - amountPercent) < 0.5 ? .on : .off
         case .lowEndGuard:
-            item.state = abs(processingTuning.lowEndGuardAmount - amountPercent) < 0.5 ? .on : .off
+            item.state = abs(currentEffects.lowEndGuard.amountPercent - amountPercent) < 0.5 ? .on : .off
         case .bassCompAmount:
-            item.state = abs(bassPowerTuning.bassCompAmountPercent - amountPercent) < 0.5 ? .on : .off
+            item.state = abs(currentEffects.bassComp.amountPercent - amountPercent) < 0.5 ? .on : .off
         case .softLimitDrive:
-            item.state = abs(bassPowerTuning.softLimitDrivePercent - amountPercent) < 0.5 ? .on : .off
+            item.state = abs(currentEffects.softLimit.drivePercent - amountPercent) < 0.5 ? .on : .off
         case .reset:
             item.state = .off
         }
@@ -499,8 +460,8 @@ extension AppDelegate {
         let summary = disabledMenuItem(
             title: String(
                 format: "Distance: %.0f cm, Strength: %.0f%%",
-                spatialTuning.listenerDistanceCm,
-                spatialTuning.strengthPercent
+                currentEffects.surround.listenerDistanceCm,
+                currentEffects.surround.spatialStrengthPercent
             )
         )
         menu.addItem(summary)
@@ -510,7 +471,7 @@ extension AppDelegate {
             to: menu,
             title: "Distance",
             component: .listenerDistance,
-            currentValue: spatialTuning.listenerDistanceCm,
+            currentValue: currentEffects.surround.listenerDistanceCm,
             options: [
                 ("35 cm", 35),
                 ("40 cm", 40),
@@ -522,7 +483,7 @@ extension AppDelegate {
             to: menu,
             title: "Strength",
             component: .strength,
-            currentValue: spatialTuning.strengthPercent,
+            currentValue: currentEffects.surround.spatialStrengthPercent,
             options: [
                 ("Soft (80%)", 80),
                 ("Normal (100%)", 100),
@@ -563,7 +524,7 @@ extension AppDelegate {
 
     private func makeBassFocusMenu() -> NSMenu {
         let menu = NSMenu()
-        let summary = disabledMenuItem(title: String(format: "Amount: %.0f%%", bassFocusTuning.amountPercent))
+        let summary = disabledMenuItem(title: String(format: "Amount: %.0f%%", currentEffects.bassFocus.amountPercent))
         menu.addItem(summary)
         menu.addItem(.separator())
 
@@ -578,7 +539,7 @@ extension AppDelegate {
             let item = NSMenuItem(title: option.0, action: #selector(selectBassFocusItem(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = BassFocusSelection(amountPercent: option.1, shouldReset: false)
-            item.state = abs(bassFocusTuning.amountPercent - option.1) < 0.5 ? .on : .off
+            item.state = abs(currentEffects.bassFocus.amountPercent - option.1) < 0.5 ? .on : .off
             menu.addItem(item)
         }
 
@@ -596,66 +557,37 @@ extension AppDelegate {
 
     @objc func selectSpatialTuningItem(_ sender: NSMenuItem) {
         guard let selection = sender.representedObject as? SpatialTuningSelection else { return }
-
-        switch selection.component {
-        case .listenerDistance:
-            spatialTuning.listenerDistanceCm = selection.value
-            spatialTuning.distanceIsSet = true
-        case .strength:
-            spatialTuning.strengthPercent = selection.value
-            spatialTuning.strengthIsSet = true
-        case .reset:
-            spatialTuning = .default
+        updateDeviceTuning { tuning in
+            switch selection.component {
+            case .listenerDistance: tuning.listenerDistanceCm = selection.value
+            case .strength: tuning.spatialStrengthPercent = selection.value
+            case .reset:
+                tuning.listenerDistanceCm = nil
+                tuning.spatialStrengthPercent = nil
+            }
         }
-
-        persistActiveDeviceTuning()
-        evaluateRouting(deviceID: activeDeviceID)
-        updateDiagnosticsMenuItems(diagnostics: audioEngine.diagnostics())
     }
 
     @objc func selectProcessingTuningItem(_ sender: NSMenuItem) {
         guard let selection = sender.representedObject as? ProcessingTuningSelection else { return }
-
-        switch selection.component {
-        case .latency:
-            if let latencyMode = selection.latencyMode {
-                processingTuning.latencyMode = latencyMode
+        updateDeviceTuning { tuning in
+            switch selection.component {
+            case .latency: tuning.latencyTargetMs = selection.latencyMode?.targetMs
+            case .spatialEnabled: tuning.spatialEnabled = selection.boolValue
+            case .bassHarmonics: tuning.bassHarmonicsAmount = selection.amountPercent
+            case .lowEndGuard: tuning.lowEndGuardAmount = selection.amountPercent
+            case .bassCompAmount: tuning.bassCompAmount = selection.amountPercent
+            case .softLimitDrive: tuning.softLimitDrive = selection.amountPercent
+            case .reset: tuning = DeviceTuning()
             }
-        case .spatialEnabled:
-            processingTuning.spatialEnabled = selection.boolValue
-        case .bassHarmonics:
-            processingTuning.bassHarmonicsAmount = selection.amountPercent
-        case .lowEndGuard:
-            processingTuning.lowEndGuardAmount = selection.amountPercent
-        case .bassCompAmount:
-            bassPowerTuning.bassCompAmountPercent = selection.amountPercent
-            bassPowerTuning.bassCompAmountIsSet = true
-        case .softLimitDrive:
-            bassPowerTuning.softLimitDrivePercent = selection.amountPercent
-            bassPowerTuning.softLimitDriveIsSet = true
-        case .reset:
-            processingTuning = .default
-            bassFocusTuning = .default
-            bassPowerTuning = .default
         }
-
-        persistActiveDeviceTuning()
-        evaluateRouting(deviceID: activeDeviceID)
-        updateDiagnosticsMenuItems(diagnostics: audioEngine.diagnostics())
     }
 
     @objc func selectBassFocusItem(_ sender: NSMenuItem) {
         guard let selection = sender.representedObject as? BassFocusSelection else { return }
-
-        if selection.shouldReset {
-            bassFocusTuning = .default
-        } else {
-            bassFocusTuning.amountPercent = selection.amountPercent
+        updateDeviceTuning { tuning in
+            tuning.bassFocusAmount = selection.shouldReset ? nil : selection.amountPercent
         }
-
-        persistActiveDeviceTuning()
-        evaluateRouting(deviceID: activeDeviceID)
-        updateDiagnosticsMenuItems(diagnostics: audioEngine.diagnostics())
     }
 
     @objc func toggleLaunchAtLogin() {
@@ -678,8 +610,7 @@ extension AppDelegate {
     }
 
     @objc func openConfigFile() {
-        let url = URL(fileURLWithPath: expandedConfigPath)
-        NSWorkspace.shared.open(url)
+        NSWorkspace.shared.open(routing.store.routingURL)
     }
 
     @objc func manualReload() {
@@ -702,19 +633,16 @@ extension AppDelegate {
     }
 
     @objc func restartAudioProcessing() {
-        guard audioEngine.canRestart else { return }
-        print(AppInfo.logPrefix("Restarting audio processing"))
-        Task { @MainActor in
-            await self.audioEngine.restart()
-            self.updateIcon()
-        }
+        guard routing.effectiveConfig != nil, !isAudioPausedByUser else { return }
+        audioEngine.stop()
+        applyCurrentRoute()
     }
 
     @objc func toggleAudioProcessingPaused() {
         if isAudioPausedByUser {
             isAudioPausedByUser = false
             print(AppInfo.logPrefix("Resuming audio processing"))
-            evaluateRouting(deviceID: activeDeviceID)
+            applyCurrentRoute()
         } else {
             isAudioPausedByUser = true
             print(AppInfo.logPrefix("Pausing audio processing"))

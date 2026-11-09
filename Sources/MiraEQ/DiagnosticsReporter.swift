@@ -62,7 +62,7 @@ extension AppDelegate {
         let silentSeconds = audioEngine.secondsSinceLastAudible()
         let lastPeak = audioEngine.lastAudiblePeak()
         let seamless = audioEngine.seamlessStartActive
-        let snapshotPath = expandedDiagnosticsSnapshotPath
+        let snapshotPath = routing.store.diagnosticsURL.path
 
         // Formatter creation is expensive; reuse a shared instance.
         // Called on MainActor, written off-thread to avoid blocking UI.

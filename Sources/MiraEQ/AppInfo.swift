@@ -8,24 +8,8 @@ enum AppInfo {
     static let aggregateDeviceName = "MiraEQ-Aggregate"
     static let statusIconSymbolName = "waveform.path"
 
-    static var configPath: String {
-        "~/.config/\(configDirectoryName)/config.txt"
-    }
-
     static var configDirectoryPath: String {
         "~/.config/\(configDirectoryName)"
-    }
-
-    static var presetDirectoryPath: String {
-        "\(configDirectoryPath)/presets"
-    }
-
-    static var devicePresetDirectoryPath: String {
-        "\(presetDirectoryPath)/device"
-    }
-
-    static var addOnPresetDirectoryPath: String {
-        "\(presetDirectoryPath)/addons"
     }
 
     static func logPrefix(_ message: String) -> String {

@@ -22,6 +22,8 @@ let appLog = OSLog(subsystem: AppInfo.logSubsystem, category: "audio")
 
 let maximumRealtimeSampleRate: Float64 = 768_000
 let maximumRealtimeChannelCount: UInt32 = 64
+let defaultSpatialListenerDistanceCm: Float = 40
+let defaultSpatialStrengthPercent: Float = 100
 let defaultSpatialHeadHeightCm: Float = 38
 let defaultSpatialDisplayAngleDegrees: Float = 150
 

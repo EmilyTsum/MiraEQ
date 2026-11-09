@@ -92,10 +92,6 @@ public final class AudioEngineManager {
 
     public init() {}
 
-    public var canRestart: Bool {
-        activeDeviceID != nil && currentConfig != nil
-    }
-
     private func beginLifecycleChange() -> UInt64 {
         lifecycleGeneration &+= 1
         return lifecycleGeneration
@@ -179,10 +175,15 @@ public final class AudioEngineManager {
         outputBufferFrameRestorePoint = nil
     }
 
-    /// Serialized entry point for starting the engine. Cancels any start still
-    /// in flight and waits for it to unwind before beginning a new one, so two
-    /// starts can never interleave and leak taps or aggregate devices.
-    public func requestStart(outputDeviceID: AudioObjectID, config: EQConfig) {
+    /// Applies the desired route, preserving standby and unchanged graph updates.
+    /// Actual starts are serialized internally; callers cannot bypass that path.
+    public func applyConfiguration(outputDeviceID: AudioObjectID, config: EQConfig) {
+        // Reloading an unchanged route must not interrupt the fade or wake
+        // standby. Settings edited in standby are used on the next resume.
+        if isInStandby, standbyDeviceID == outputDeviceID {
+            standbyConfig = config
+            return
+        }
         requestStart(outputDeviceID: outputDeviceID, config: config, retriesRemaining: 2)
     }
 
@@ -267,7 +268,7 @@ public final class AudioEngineManager {
     public func wakeFromStandbyNow() {
         guard isInStandby, let deviceID = standbyDeviceID, let config = standbyConfig else { return }
         os_log(.default, log: appLog, "%{public}s waking from standby (manual)", AppInfo.displayName)
-        requestStart(outputDeviceID: deviceID, config: config)
+        requestStart(outputDeviceID: deviceID, config: config, retriesRemaining: 2)
     }
 
     private func tryResumeFromStandby() -> Bool {
@@ -283,7 +284,7 @@ public final class AudioEngineManager {
         let volume = readOutputVolumeScalar(deviceID: deviceID) ?? 0
         guard !muted, volume > 0.000_1, hasNewPlayer else { return false }
         os_log(.default, log: appLog, "%{public}s resuming from standby", AppInfo.displayName)
-        requestStart(outputDeviceID: deviceID, config: config)
+        requestStart(outputDeviceID: deviceID, config: config, retriesRemaining: 2)
         return true
     }
 
@@ -342,7 +343,7 @@ public final class AudioEngineManager {
         return machTicksToMilliseconds(now - last) / 1_000
     }
 
-    public func start(outputDeviceID: AudioObjectID, config: EQConfig) async {
+    private func start(outputDeviceID: AudioObjectID, config: EQConfig) async {
         if isActive && activeDeviceID == outputDeviceID {
             if requiresRestartForLatencyChange(to: config) {
                 os_log(.default, log: appLog, "%{public}s restarting to apply latency target change.", AppInfo.displayName)
@@ -893,14 +894,15 @@ public final class AudioEngineManager {
         resetRuntimeDiagnostics()
     }
 
-    public func restart() async {
+    private func restart() async {
         guard let deviceID = activeDeviceID, let config = currentConfig else { return }
         stop()
-        requestStart(outputDeviceID: deviceID, config: config)
+        requestStart(outputDeviceID: deviceID, config: config, retriesRemaining: 2)
         await pendingStartTask?.value
     }
 
-    public func updateConfig(_ config: EQConfig) {
+    private func updateConfig(_ config: EQConfig) {
+        guard currentConfig != config else { return }
         self.currentConfig = config
         if isActive {
             // A live config change lands at full strength; abandon any fade.
@@ -960,7 +962,7 @@ public final class AudioEngineManager {
         let rearSurroundShadow = modeledShadow
         let listenerDistanceCm = finiteClamped(
             surround.listenerDistanceCm,
-            default: SpatialTuning.default.listenerDistanceCm,
+            default: defaultSpatialListenerDistanceCm,
             min: 25,
             max: 80
         )
@@ -973,7 +975,7 @@ public final class AudioEngineManager {
         )
         let spatialStrengthPercent = finiteClamped(
             surround.spatialStrengthPercent,
-            default: SpatialTuning.default.strengthPercent,
+            default: defaultSpatialStrengthPercent,
             min: 60,
             max: 140
         )

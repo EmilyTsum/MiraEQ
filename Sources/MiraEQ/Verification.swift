@@ -10,119 +10,47 @@ enum VerificationFailure: Error, CustomStringConvertible {
     }
 }
 
-private struct TuningSet {
-    let processing: ProcessingTuning
-    let spatial: SpatialTuning
-    let bassFocus: BassFocusTuning
-    let bassPower: BassPowerTuning
-}
-
 func effectiveConfig(
     devicePresetName: String,
-    addOnPresetName: String
+    addOnPresetName: String,
+    store: ConfigurationStore = ConfigurationStore()
 ) throws -> EQConfig {
-    let (deviceConfig, addOnConfig) = try loadPresetPair(
-        devicePresetName: devicePresetName,
-        addOnPresetName: addOnPresetName
-    )
-    let tunings = TuningSet(
-        processing: ProcessingTuning(effects: addOnConfig.effects),
-        spatial: SpatialTuning(surround: addOnConfig.effects.surround),
-        bassFocus: BassFocusTuning(effects: addOnConfig.effects),
-        bassPower: BassPowerTuning(effects: addOnConfig.effects)
-    )
-    return makeEffectiveConfig(base: deviceConfig, tunings: tunings)
+    let pair = try loadPresetPair(devicePresetName: devicePresetName, addOnPresetName: addOnPresetName, store: store)
+    return pair.tuning.applying(to: pair.device)
 }
 
 func verifyRoundTrip(
     devicePresetName: String,
-    addOnPresetName: String
+    addOnPresetName: String,
+    store: ConfigurationStore = ConfigurationStore()
 ) throws {
-    let (deviceConfig, addOnConfig) = try loadPresetPair(
-        devicePresetName: devicePresetName,
-        addOnPresetName: addOnPresetName
-    )
-
-    let originalTunings = TuningSet(
-        processing: ProcessingTuning(effects: addOnConfig.effects),
-        spatial: SpatialTuning(surround: addOnConfig.effects.surround),
-        bassFocus: BassFocusTuning(effects: addOnConfig.effects),
-        bassPower: BassPowerTuning(effects: addOnConfig.effects)
-    )
-
-    let originalEffective = makeEffectiveConfig(base: deviceConfig, tunings: originalTunings)
-
-    let serialized = hiddenTuningPresetContent(
-        processingTuning: originalTunings.processing,
-        spatialTuning: originalTunings.spatial,
-        bassFocusTuning: originalTunings.bassFocus,
-        bassPowerTuning: originalTunings.bassPower
-    )
-
-    let (reparsedConfig, reparsedWarnings) = ConfigParser.parse(content: serialized)
-    guard reparsedWarnings.isEmpty else {
-        throw VerificationFailure.message("Round-trip parse produced warnings: \(reparsedWarnings)")
+    let pair = try loadPresetPair(devicePresetName: devicePresetName, addOnPresetName: addOnPresetName, store: store)
+    let (reparsed, warnings) = ConfigParser.parseTuning(content: pair.tuning.presetContent)
+    guard warnings.isEmpty else {
+        throw VerificationFailure.message("Round-trip parse produced warnings: \(warnings)")
     }
-
-    let roundTripTunings = TuningSet(
-        processing: ProcessingTuning(effects: reparsedConfig.effects),
-        spatial: SpatialTuning(surround: reparsedConfig.effects.surround),
-        bassFocus: BassFocusTuning(effects: reparsedConfig.effects),
-        bassPower: BassPowerTuning(effects: reparsedConfig.effects)
-    )
-
-    let roundTripEffective = makeEffectiveConfig(base: deviceConfig, tunings: roundTripTunings)
-
-    guard originalEffective == roundTripEffective else {
-        throw VerificationFailure.message(
-            "Round-trip effective config mismatch for \(devicePresetName) / \(addOnPresetName)"
-        )
+    guard pair.tuning.applying(to: pair.device) == reparsed.applying(to: pair.device) else {
+        throw VerificationFailure.message("Round-trip effective config mismatch for \(devicePresetName) / \(addOnPresetName)")
     }
-}
-
-private func makeEffectiveConfig(base: EQConfig, tunings: TuningSet) -> EQConfig {
-    return base
-        .applying(processingTuning: tunings.processing, spatialTuning: tunings.spatial)
-        .applying(bassFocusTuning: tunings.bassFocus)
-        .applying(bassPowerTuning: tunings.bassPower)
 }
 
 private func loadPresetPair(
     devicePresetName: String,
-    addOnPresetName: String
-) throws -> (device: EQConfig, addOn: EQConfig) {
-    let configDir = configDirectory()
-    let routingURL = configDir.appendingPathComponent("config.txt")
-    let routingContent = try String(contentsOf: routingURL, encoding: .utf8)
-    let mappings = ConfigParser.parseRouting(content: routingContent)
-
-    guard let mapping = mappings.first(where: {
+    addOnPresetName: String,
+    store: ConfigurationStore
+) throws -> (device: EQConfig, tuning: DeviceTuning) {
+    let mappings = try store.loadRouting()
+    guard mappings.contains(where: {
         $0.devicePresetFile == devicePresetName && $0.addOnPresetFile == addOnPresetName
     }) else {
         throw VerificationFailure.message("Mapping not found for \(devicePresetName) / \(addOnPresetName)")
     }
-
-    let devicePresetURL = configDir
-        .appendingPathComponent("presets/device")
-        .appendingPathComponent(mapping.devicePresetFile ?? "")
-    let addOnPresetURL = configDir
-        .appendingPathComponent("presets/addons")
-        .appendingPathComponent(mapping.addOnPresetFile ?? "")
-
-    let deviceContent = try String(contentsOf: devicePresetURL, encoding: .utf8)
-    let addOnContent = try String(contentsOf: addOnPresetURL, encoding: .utf8)
-
-    let (deviceConfig, deviceWarnings) = ConfigParser.parse(content: deviceContent)
-    let (addOnConfig, addOnWarnings) = ConfigParser.parse(content: addOnContent)
-
-    guard deviceWarnings.isEmpty else {
-        throw VerificationFailure.message("Device preset \(devicePresetName) produced warnings: \(deviceWarnings)")
+    let device = ConfigParser.parse(content: try store.devicePresetContent(named: devicePresetName))
+    let tuning = ConfigParser.parseTuning(content: try store.tuningContent(named: addOnPresetName))
+    guard device.warnings.isEmpty, tuning.warnings.isEmpty else {
+        throw VerificationFailure.message("Preset warnings: \(device.warnings + tuning.warnings)")
     }
-    guard addOnWarnings.isEmpty else {
-        throw VerificationFailure.message("Add-on preset \(addOnPresetName) produced warnings: \(addOnWarnings)")
-    }
-
-    return (deviceConfig, addOnConfig)
+    return (device.config, tuning.tuning)
 }
 
 func printEffectiveConfig(_ config: EQConfig) {
@@ -162,13 +90,4 @@ func printEffectiveConfig(_ config: EQConfig) {
     print("bassMono.cutoffHz: \(config.effects.bassMono.cutoffHz)")
     print("loudness.amount: \(config.effects.loudness.amount)")
     print("bands.count: \(config.bands.count)")
-}
-
-private func configDirectory() -> URL {
-    // Keep the path identical to the app runtime (AppInfo, case-sensitive).
-    // The previous hardcoded ".config/miraeq" (lowercase) mismatched
-    // AppInfo's "MiraEQ" and broke --print-effective-config on
-    // case-sensitive filesystems.
-    let expanded = (AppInfo.configDirectoryPath as NSString).expandingTildeInPath
-    return URL(fileURLWithPath: expanded, isDirectory: true)
 }

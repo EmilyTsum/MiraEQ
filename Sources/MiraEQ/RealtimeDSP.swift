@@ -164,10 +164,10 @@ let fallbackDSPConfig = DSPConfig(
     crossTalkDelaySamples: 1,
     sampleRate: 48000,
     maxRealtimeLatencySeconds: 0.012,
-    listenerDistanceCm: SpatialTuning.default.listenerDistanceCm,
+    listenerDistanceCm: defaultSpatialListenerDistanceCm,
     headHeightCm: defaultSpatialHeadHeightCm,
     displayAngleDegrees: defaultSpatialDisplayAngleDegrees,
-    spatialStrengthPercent: SpatialTuning.default.strengthPercent,
+    spatialStrengthPercent: defaultSpatialStrengthPercent,
     bassMonoCutoffHz: 0,
     loudnessAmount: 0
 )
@@ -695,11 +695,11 @@ func estimatedCrossTalkDelaySamples(
 }
 
 func modeledRearDelayMilliseconds(for surround: SurroundEffectConfig) -> Float {
-    let listenerDistanceCm = finiteOrDefault(surround.listenerDistanceCm, default: SpatialTuning.default.listenerDistanceCm)
+    let listenerDistanceCm = finiteOrDefault(surround.listenerDistanceCm, default: defaultSpatialListenerDistanceCm)
     let headHeightCm = finiteOrDefault(surround.headHeightCm, default: defaultSpatialHeadHeightCm)
     let displayAngleDegrees = finiteOrDefault(surround.displayAngleDegrees, default: defaultSpatialDisplayAngleDegrees)
     let rearDelayMs = finiteOrDefault(surround.rearDelayMs, default: 4.2)
-    let distanceDelta = (listenerDistanceCm - SpatialTuning.default.listenerDistanceCm) / 10
+    let distanceDelta = (listenerDistanceCm - defaultSpatialListenerDistanceCm) / 10
     let heightDelta = (headHeightCm - defaultSpatialHeadHeightCm) / 10
     let angleDelta = (displayAngleDegrees - defaultSpatialDisplayAngleDegrees) / 15
     let modeled = rearDelayMs

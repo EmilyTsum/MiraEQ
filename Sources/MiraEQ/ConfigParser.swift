@@ -260,7 +260,7 @@ public struct DeviceMapping: Equatable {
     }
 }
 
-public class ConfigParser {
+public enum ConfigParser {
     public static func parse(content: String) -> (config: EQConfig, warnings: [String]) {
         var preamp: Float = 0.0
         var bands: [EQBand] = []
@@ -318,6 +318,48 @@ public class ConfigParser {
         }
         
         return (EQConfig(preamp: preamp, bands: bands, effects: effects), warnings)
+    }
+
+    /// Read the existing Effect: format as sparse menu overrides. Presence is
+    /// independent of value, so an explicit zero survives saving and loading.
+    static func parseTuning(content: String) -> (tuning: DeviceTuning, warnings: [String]) {
+        let (config, warnings) = parse(content: content)
+        let effects = config.effects
+        var tuning = DeviceTuning()
+        var spatialIsSet = false
+        for line in content.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.lowercased().hasPrefix("effect:") else { continue }
+            var ignoredWarnings: [String] = []
+            guard let parameters = effectParameters(String(trimmed.dropFirst(7)), warnings: &ignoredWarnings) else { continue }
+            func has(_ keys: String...) -> Bool { keys.contains { parameters.values[$0] != nil } }
+            switch parameters.name {
+            case "latency", "buffer":
+                if has("target", "time", "ms") { tuning.latencyTargetMs = effects.latency.targetMs }
+            case "delay":
+                spatialIsSet = spatialIsSet || has("time", "timems", "ms", "mix", "feedback", "fb")
+            case "surround", "spatial", "wide":
+                spatialIsSet = spatialIsSet || has("width", "amount", "reverb", "reverbmix", "space", "rear", "behind", "wrap", "depth")
+                if has("distance", "distancecm", "listener") { tuning.listenerDistanceCm = effects.surround.listenerDistanceCm }
+                if has("strength", "spatialstrength") { tuning.spatialStrengthPercent = effects.surround.spatialStrengthPercent }
+            case "bassharmonics", "bass_harmonics", "bass", "harmonics":
+                if has("amount", "mix") { tuning.bassHarmonicsAmount = min(effects.bassHarmonics.amount, 20) }
+                if has("cutoff", "cutoffhz", "freq") { tuning.bassHarmonicsCutoffHz = effects.bassHarmonics.cutoffHz }
+                if has("speakercutoff", "speakercutoffhz", "speaker") { tuning.bassHarmonicsSpeakerCutoffHz = effects.bassHarmonics.speakerCutoffHz }
+            case "lowendguard", "low_end_guard", "bassguard", "basslimiter":
+                if has("amount", "mix", "strength") { tuning.lowEndGuardAmount = min(effects.lowEndGuard.amountPercent, 80) }
+            case "bassfocus", "bass_focus", "inverse_loudness", "loudnesscomp":
+                if has("amount", "mix", "strength") { tuning.bassFocusAmount = effects.bassFocus.amountPercent }
+            case "basscomp":
+                if has("amount", "mix", "strength") { tuning.bassCompAmount = effects.bassComp.amountPercent }
+                if has("crossover", "cutoff", "freq") { tuning.bassCompCrossoverHz = effects.bassComp.crossoverHz }
+            case "softlimit":
+                if has("drive", "amount", "mix") { tuning.softLimitDrive = effects.softLimit.drivePercent }
+            default: break
+            }
+        }
+        if spatialIsSet { tuning.spatialEnabled = effects.surround.isEnabled || effects.delay.isEnabled }
+        return (tuning, warnings)
     }
     
     public static func parseRouting(content: String) -> [DeviceMapping] {
@@ -447,9 +489,9 @@ public class ConfigParser {
     }
 
     private static func parseEffectLine(_ line: String, into effects: inout EffectConfig, warnings: inout [String]) {
-        let tokens = line.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
-        guard let effectName = tokens.first?.lowercased() else { return }
-        let values = keyValueMap(from: Array(tokens.dropFirst()), warnings: &warnings, context: line)
+        guard let parameters = effectParameters(line, warnings: &warnings) else { return }
+        let effectName = parameters.name
+        let values = parameters.values
 
         switch effectName {
         case "delay":
@@ -512,6 +554,12 @@ public class ConfigParser {
         }
     }
 
+    private static func effectParameters(_ line: String, warnings: inout [String]) -> (name: String, values: [String: Float])? {
+        let tokens = line.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+        guard let name = tokens.first?.lowercased() else { return nil }
+        return (name, keyValueMap(from: Array(tokens.dropFirst()), warnings: &warnings, context: line))
+    }
+
     private static func keyValueMap(from tokens: [String], warnings: inout [String], context line: String) -> [String: Float] {
         let knownKeys: Set<String> = [
             "time", "timems", "ms",
@@ -570,7 +618,7 @@ public class ConfigParser {
     }
 
     private static func clamped(_ value: Float, min minValue: Float, max maxValue: Float) -> Float {
-        clampTuning(value, min: minValue, max: maxValue)
+        max(minValue, min(value, maxValue))
     }
     
     private static func qToBandwidth(_ q: Float) -> Float {

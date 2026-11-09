@@ -30,3 +30,18 @@ scripts/build_app.sh <version>   # produces dist/MiraEQ.app and dist/MiraEQ-<ver
 ```
 
 Requires macOS 14.2+.
+
+## Development
+
+The executable product is `MiraEQ`. With Xcode selected:
+
+```sh
+swift build
+swift test
+```
+
+If `xcode-select` points to Command Line Tools and XCTest is unavailable, use
+`DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test`.
+
+See [Architecture](docs/architecture.md) for configuration ownership, routing,
+standby behavior, and the boundary with the realtime audio code.

@@ -85,26 +85,11 @@ final class ConfigParserTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(config.effects.bassHarmonics.cutoffHz, 50)
     }
 
-    func testClampTuningHelper() {
-        XCTAssertEqual(clampTuning(500, min: 0, max: 100), 100)
-        XCTAssertEqual(clampTuning(-5, min: 0, max: 100), 0)
-        XCTAssertEqual(clampedTuningValue(42, min: 0, max: 100), 42)
-    }
-
     func testHiddenPresetRoundTrip() {
-        let processing = ProcessingTuning.default
-        let spatial = SpatialTuning.default
-        let focus = BassFocusTuning.default
-        let power = BassPowerTuning.default
-        let content = hiddenTuningPresetContent(
-            processingTuning: processing,
-            spatialTuning: spatial,
-            bassFocusTuning: focus,
-            bassPowerTuning: power
-        )
-        let (reparsed, warnings) = ConfigParser.parse(content: content)
+        let tuning = DeviceTuning(latencyTargetMs: 5, bassHarmonicsAmount: 0, bassFocusAmount: 30)
+        let (reparsed, warnings) = ConfigParser.parseTuning(content: tuning.presetContent)
         XCTAssertTrue(warnings.isEmpty, "warnings: \(warnings)")
-        XCTAssertTrue(reparsed.effects.latency.isSet)
+        XCTAssertEqual(reparsed, tuning)
     }
 }
 
@@ -119,20 +104,23 @@ final class AudioRingBufferTests: XCTestCase {
         XCTAssertEqual(dropped, 0)
         var output = [Float](repeating: -1, count: 128)
         let read = output.withUnsafeMutableBufferPointer { ptr in
-            ring.read(ptr.baseAddress!, count: output.count)
+            ring.read(ptr.baseAddress!, count: ptr.count)
         }
         XCTAssertEqual(read, 128)
         XCTAssertEqual(output, input)
     }
 
-    func testOverflowDropsOldestAccounting() {
+    func testOverflowPreservesUnreadSamples() {
         let ring = AudioRingBuffer(capacityFrames: 4, channels: 1)
-        var input = [Float](0..<16).map { Float($0) }
+        let input = (0..<16).map { Float($0) }
         let dropped = input.withUnsafeBufferPointer { ptr in
             ring.write(ptr.baseAddress!, count: input.count)
         }
-        XCTAssertGreaterThanOrEqual(dropped, 0)
-        // Capacity is rounded to power of two; available never exceeds capacity.
-        XCTAssertLessThanOrEqual(ring.availableToRead, ring.capacitySamples)
+        XCTAssertEqual(dropped, 12)
+        XCTAssertEqual(ring.availableToRead, 4)
+        var output = [Float](repeating: -1, count: 4)
+        let read = output.withUnsafeMutableBufferPointer { ring.read($0.baseAddress!, count: $0.count) }
+        XCTAssertEqual(read, 4)
+        XCTAssertEqual(output, [0, 1, 2, 3])
     }
 }

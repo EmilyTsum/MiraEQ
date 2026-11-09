@@ -50,48 +50,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, DeviceMonito
     var statusItem: NSStatusItem!
     let audioEngine = AudioEngineManager()
     let deviceMonitor = DeviceMonitor()
-    var fileWatcher: FileWatcher!
-    var devicePresetWatcher: FileWatcher?
-    var addOnPresetWatcher: FileWatcher?
-    var presetReloadDebounceTask: Task<Void, Never>?
+    let routing = DeviceRoutingController()
+    lazy var configurationMonitor = ConfigurationMonitor(store: routing.store) { [weak self] in
+        self?.loadConfig()
+    }
 
-    var mappings: [DeviceMapping] = []
-    var activeDevicePresetName: String? = nil
-    var activeAddOnPresetName: String? = nil
-    var processingTuning = ProcessingTuning.default
-    var spatialTuning = SpatialTuning.default
-    var bassFocusTuning = BassFocusTuning.default
-    var bassPowerTuning = BassPowerTuning.default
+    var activeDeviceName: String { routing.device?.name ?? "Unknown" }
+    var activeDeviceID: AudioObjectID { routing.device?.id ?? 0 }
+    var activeDevicePresetName: String? { routing.activeMapping?.devicePresetFile }
+    var currentEffects: EffectConfig { routing.effectiveConfig?.effects ?? EffectConfig() }
 
-    let configPath = AppInfo.configPath
-
-    lazy var expandedConfigPath: String = {
-        (configPath as NSString).expandingTildeInPath
-    }()
-
-    lazy var expandedPresetDirectoryPath: String = {
-        (AppInfo.presetDirectoryPath as NSString).expandingTildeInPath
-    }()
-
-    lazy var expandedDevicePresetDirectoryPath: String = {
-        (AppInfo.devicePresetDirectoryPath as NSString).expandingTildeInPath
-    }()
-
-    lazy var expandedAddOnPresetDirectoryPath: String = {
-        (AppInfo.addOnPresetDirectoryPath as NSString).expandingTildeInPath
-    }()
-
-    lazy var expandedDiagnosticsSnapshotPath: String = {
-        let directory = (AppInfo.configDirectoryPath as NSString).expandingTildeInPath
-        return (directory as NSString).appendingPathComponent("diagnostics.txt")
-    }()
-
-    var isBuiltInSpeakers = false
-    var activeDeviceName = "Unknown"
-    var activeDeviceUID = ""
-    var activeDeviceID: AudioObjectID = 0
     var isAudioPausedByUser = false
-    var lastConfigLoadError: Error? = nil
     var diagnosticsRefreshTimer: Timer?
     var diagnosticsSnapshotTick = 0
     var volumeRefreshGeneration: UInt64 = 0
@@ -118,7 +87,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, DeviceMonito
         // Set activation policy to accessory so the app does not show in the dock
         NSApp.setActivationPolicy(.accessory)
         boostProcessPriority()
-        ensureSupportFiles()
+        do {
+            try routing.store.prepareSupportFiles()
+        } catch {
+            print(AppInfo.logPrefix("Could not prepare configuration files: \(error)"))
+        }
 
         // Set up Status Item
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -127,34 +100,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, DeviceMonito
         statusItem.menu = menu
         updateIcon()
 
-        // Initialize File Watcher
-        fileWatcher = FileWatcher(path: expandedConfigPath) { [weak self] in
-            guard let self = self else { return }
-            Task { @MainActor in
-                self.loadConfig()
-            }
-        }
-        fileWatcher.start()
-
-        // Watch the preset directories too, so editing a preset file directly
-        // (atomic saves show up as directory entry changes) hot-reloads the
-        // active configuration just like editing config.txt does.
-        devicePresetWatcher = FileWatcher(path: expandedDevicePresetDirectoryPath, watchesDirectory: true) { [weak self] in
-            self?.schedulePresetReload()
-        }
-        devicePresetWatcher?.start()
-        addOnPresetWatcher = FileWatcher(path: expandedAddOnPresetDirectoryPath, watchesDirectory: true) { [weak self] in
-            self?.schedulePresetReload()
-        }
-        addOnPresetWatcher?.start()
-
-        // Load initial config
-        loadConfig()
-        startVolumeRefreshTimer()
-
         if UserDefaults.standard.object(forKey: silenceStandbyDefaultsKey) != nil {
             audioEngine.silenceStandbyEnabled = UserDefaults.standard.bool(forKey: silenceStandbyDefaultsKey)
         }
+
+        configurationMonitor.start()
+        loadConfig()
+        startVolumeRefreshTimer()
 
         audioEngine.onStateChange = { [weak self] in
             guard let self else { return }
@@ -174,13 +126,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, DeviceMonito
 
     func applicationWillTerminate(_ notification: Notification) {
         deviceChangeDebounceTask?.cancel()
-        presetReloadDebounceTask?.cancel()
-        devicePresetWatcher?.stop()
-        addOnPresetWatcher?.stop()
+        configurationMonitor.stop()
         diagnosticsRefreshTimer?.invalidate()
         volumeRefreshGeneration &+= 1
         deviceMonitor.stopMonitoring()
-        fileWatcher.stop()
         audioEngine.stop()
         endRealtimeAudioActivity()
     }
