@@ -61,7 +61,9 @@ not claim a measured acoustic end-to-end latency.
 ## Verification and maintenance
 
 `swift test -c release --filter SpeakerEngineTests` renders the actual graph
-offline at 44.1 kHz. It exercises full-scale 64/125 Hz tones, multitone input,
+offline at 44.1 kHz. The fixture configures its engine for offline rendering
+before graph construction and keeps it offline through teardown, avoiding
+physical output-unit creation. It exercises full-scale 64/125 Hz tones, multitone input,
 impulses, high-frequency content, and silence at three system-volume settings.
 It checks finite output, peak containment, the 11-band allocation, profile
 normalization, and buffer-size range constraints. The same fixture emits mean

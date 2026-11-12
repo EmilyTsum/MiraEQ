@@ -5,12 +5,13 @@ import AudioToolbox
 /// No delay, reverb, spatializer, bass compressor, or saturation units exist.
 @MainActor
 final class SpeakerAudioGraph {
-    let engine = AVAudioEngine()
+    let engine: AVAudioEngine
     let source: AVAudioSourceNode
     let equalizer: AVAudioUnitEQ
     let limiter: AVAudioUnitEffect
 
-    init(format: AVAudioFormat, config: EQConfig, renderBlock: @escaping AVAudioSourceNodeRenderBlock) {
+    init(format: AVAudioFormat, config: EQConfig, engine: AVAudioEngine = AVAudioEngine(), renderBlock: @escaping AVAudioSourceNodeRenderBlock) {
+        self.engine = engine
         source = AVAudioSourceNode(format: format, renderBlock: renderBlock)
         equalizer = AVAudioUnitEQ(numberOfBands: max(1, min(config.bands.count, 32)))
         limiter = Self.effect(kAudioUnitSubType_PeakLimiter)

@@ -74,10 +74,12 @@ final class SpeakerEngineTests: XCTestCase {
             let resources = try XCTUnwrap(rtActiveResources.load(ordering: .acquiring))
             let input = OfflineSpeakerInput(config: renderConfiguration(config, rate: Float(rate)), resources: resources, rate: rate)
             storeRealtimeOutputVolumeScalar(volume)
-            let graph = SpeakerAudioGraph(format: format, config: config) { _, _, frames, buffers in input.render(frames, buffers) }
-            let engine = graph.engine
-            XCTAssertEqual(graph.equalizer.bands.count, 11)
+            // Enter offline mode before creating the graph's output node so
+            // the fixture never creates and tears down a physical HAL unit.
+            let engine = AVAudioEngine()
             try engine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 128)
+            let graph = SpeakerAudioGraph(format: format, config: config, engine: engine) { _, _, frames, buffers in input.render(frames, buffers) }
+            XCTAssertEqual(graph.equalizer.bands.count, 11)
             try engine.start()
             let output = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 128)!
             var peak: Float = 0
@@ -98,7 +100,8 @@ final class SpeakerEngineTests: XCTestCase {
             }
             let effectLatencyMs = graph.latencyMs
             engine.stop()
-            engine.disableManualRenderingMode()
+            // Keep it offline through deallocation. Disabling manual mode
+            // here would recreate an unnecessary physical output unit.
             purgeResources()
             XCTAssertEqual(nonFinite, 0)
             XCTAssertGreaterThan(peak, 0.1)
