@@ -1,6 +1,6 @@
 # MiraEQ
 
-Menu bar system-wide equalizer for macOS. Taps system audio with a Core Audio process tap, applies per-device EQ presets and spatial/bass processing, and plays back through the selected output device.
+Menu bar system-wide audio processor with one dedicated MacBook Air Rich speaker engine. Captures system audio with a Core Audio process tap and applies low-frequency shaping, an 11-stage EQ, and final peak protection.
 
 ## Install
 
@@ -17,8 +17,9 @@ xattr -cr /Applications/MiraEQ.app
 
 ## Features
 
-- Per-device EQ presets (32-band) with automatic routing on default-device change
-- Spatial model, bass harmonics/focus/comp, low-end guard, final safety limiter
+- One Rich speaker preset: 55 Hz high-pass and 10 parametric EQ bands, global gain 0 dB
+- Loudness, bass harmonics/focus, low-end guard, and one final peak limiter
+- Dedicated low-latency graph with no spatial, delay/reverb, BassComp, SoftLimit, or Bass Mono processing
 - Auto-standby: after 2 minutes of silence with no active output streams (toggleable in the menu), or whenever the output is muted / at zero volume, audio capture stops; processing resumes automatically when playback starts. Players that keep a silent output stream open stay processed, so resuming on that same stream never loses EQ. Original audio keeps playing during the seamless switchover.
 - Preset files hot-reload: editing `config.txt` or any preset file re-applies the configuration immediately
 - Config and presets live in `~/.config/MiraEQ`
@@ -43,5 +44,5 @@ swift test
 If `xcode-select` points to Command Line Tools and XCTest is unavailable, use
 `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test`.
 
-See [Architecture](docs/architecture.md) for configuration ownership, routing,
+See [Speaker engine](docs/speaker-engine.md) and [Architecture](docs/architecture.md) for configuration ownership, routing,
 standby behavior, and the boundary with the realtime audio code.

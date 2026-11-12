@@ -33,7 +33,7 @@ struct DeviceTuning: Equatable {
         if let latencyTargetMs {
             config.effects.latency = LatencyEffectConfig(targetMs: latencyTargetMs, isSet: true)
         } else if !config.effects.latency.isSet {
-            config.effects.latency = LatencyEffectConfig(targetMs: LatencyMode.low.targetMs, isSet: true)
+            config.effects.latency = LatencyEffectConfig(targetMs: LatencyMode.ultra.targetMs, isSet: true)
         }
 
         if let bassHarmonicsAmount { config.effects.bassHarmonics.amount = bassHarmonicsAmount }

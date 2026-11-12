@@ -1,6 +1,8 @@
 # MiraEQ architecture
 
-The menu and audio engine share one resolved device configuration. The app has
+The menu and audio engine share one resolved device configuration. The current
+render path is the [dedicated speaker engine](speaker-engine.md); legacy effect
+fields remain readable but are normalized out before rendering. The app has
 one executable target and its existing Atomics dependency; configuration does
 not need a service container, plugin system, database, or event bus.
 
@@ -50,20 +52,18 @@ The hidden preset uses the existing `Effect:` syntax and writes only the fields
 that are set. Reading tracks the presence of each valid parameter independently
 of its value. This allows a Bass Harmonics amount of zero to remain off and
 prevents a Bass Focus edit from implicitly enabling Spatial or changing latency.
-A distance/strength override adjusts the position model without toggling Spatial.
+Legacy distance/strength fields are readable for compatibility but the speaker engine ignores them.
 Float values round-trip without two-decimal rounding or latency-mode snapping.
 
 Composition runs once against the base preset through `DeviceTuning.applying`.
 The runtime and `--print-effective-config` verification use that same method.
 When neither the base preset nor an override specifies latency, the target is
-5 ms. Spatial enable retains the existing processing model and 6.5 dB headroom
-adjustment. Low-end guard parameters and other base effects continue to come
-from the EQ preset. The bundled Rich/hidden preset pair retains its existing
-numeric effective configuration.
+1 ms. The speaker profile forces unity global gain and disables legacy spatial effects. Low-end guard parameters and other base effects continue to come
+from the EQ preset. The bundled Rich/hidden pair now matches the active 55 Hz high-pass speaker profile
+with unity global gain and Bass Mono disabled.
 
 Menu checkmarks display effective values. “Reset Processing to Preset” clears
-all menu overrides, including the spatial position model. The narrower Spatial
-Model and Bass Focus resets clear only their own overrides. Saving a single
+all menu overrides, including legacy spatial overrides. The narrower Bass Focus reset clears only its own override. Saving a single
 setting does not pin the inherited settings to today's base-preset values.
 
 ## Changes and failures

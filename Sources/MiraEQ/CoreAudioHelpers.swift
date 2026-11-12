@@ -264,7 +264,7 @@ func nearestPowerOfTwo(_ value: UInt32) -> UInt32 {
 }
 
 func preferredBufferFrameSize(sampleRate: Double, targetLatencyMs: Float, range: AudioValueRange?) -> UInt32 {
-    let minimumStableFrames: UInt32 = 128
+    let minimumStableFrames: UInt32 = 64
     let targetFrames = max(minimumStableFrames, UInt32((sampleRate * Double(max(targetLatencyMs, 0.25)) / 1_000).rounded()))
     var frames = nearestPowerOfTwo(targetFrames)
 

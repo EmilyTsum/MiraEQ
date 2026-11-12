@@ -22,7 +22,6 @@ public struct AudioEngineDiagnostics {
     public let requestedBufferFrames: UInt32
     public let outputBufferFrames: UInt32
     public let aggregateBufferFrames: UInt32
-    public let effectDelayMs: Double
     public let renderCallbacks: UInt64
     public let idleRenderCallbacks: UInt64
     public let ioCallbacks: UInt64
@@ -34,12 +33,8 @@ public struct AudioEngineDiagnostics {
     public let lastRenderFrameCount: UInt64
     public let lastRenderDurationMs: Double
     public let maxRenderDurationMs: Double
+    public let nativeEffectLatencyMs: Double
     public let renderBudgetMs: Double
-    public let spatialListenerDistanceCm: Float
-    public let spatialHeadHeightCm: Float
-    public let spatialDisplayAngleDegrees: Float
-    public let spatialStrengthPercent: Float
-    public let crossTalkDelayMs: Double
     public let outputVolumePercent: Float
     public let bassFocusAmountPercent: Float
     public let bassFocusReductionDb: Float
@@ -47,7 +42,6 @@ public struct AudioEngineDiagnostics {
     public let lowEndGuardAverageReductionDb: Float
     public let lowEndGuardMaxReductionDb: Float
     public let lowEndGuardPeakDb: Float
-    public let finalSafetyCompressionDb: Float
     public let startedAt: Date?
     public let startCount: UInt64
 }

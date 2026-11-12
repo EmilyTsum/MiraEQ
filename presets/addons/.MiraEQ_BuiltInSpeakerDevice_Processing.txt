@@ -1,10 +1,6 @@
 # MiraEQ Hidden Processing Preset
 # This file stores per-device menu settings. It is managed by the app.
 Effect: Latency target 1 ms
-Effect: Delay time 0 ms feedback 0 mix 0
-Effect: Surround width 0 reverb 0 rear 0 reardelay 4.2 ms shadow 58 distance 40 strength 100
-Effect: BassHarmonics amount 14 cutoff 135 Hz speaker 135 Hz
+Effect: BassHarmonics amount 8 cutoff 135 Hz speaker 135 Hz
 Effect: LowEndGuard amount 45 threshold -18 cutoff 180 Hz ratio 4 maxreduction 4.5
 Effect: BassFocus amount 70 threshold -18 highcut 7
-Effect: BassComp amount 50 crossover 200 Hz
-Effect: SoftLimit drive 0

@@ -53,54 +53,6 @@ func bandpassBiquad(sampleRate: Float, center: Float, q: Float) -> BiquadCoeffic
     )
 }
 
-struct DSPConfig {
-    let bassHarmonicsAmount: Float
-    let bassHarmonicsCutoffHz: Float
-    let bassHarmonicsSpeakerCutoffHz: Float
-    let bassHarmonicsLowpass: BiquadCoefficients
-    let bassHarmonicsBandpass: BiquadCoefficients
-    let bassHarmonicsDCPole: Float
-    let bassHarmonicsEnvelopeAttack: Float
-    let bassHarmonicsEnvelopeRelease: Float
-    let bassFocusAmount: Float
-    let bassFocusThresholdDb: Float
-    let bassFocusMaxHighCutDb: Float
-    let bassFocusMaxHighCutGain: Float
-    let lowEndGuardAmount: Float
-    let lowEndGuardThresholdDb: Float
-    let lowEndGuardThresholdLinear: Float
-    let lowEndGuardCutoffHz: Float
-    let lowEndGuardRatio: Float
-    let lowEndGuardMaxReductionDb: Float
-    let lowEndGuardMaxReductionGain: Float
-    let bassCompAmount: Float
-    let bassCompLowpass: BiquadCoefficients
-    let bassCompEnvelopeAttack: Float
-    let bassCompEnvelopeRelease: Float
-    let bassCompGainSmoothing: Float
-    let bassCompThresholdLinear: Float
-    let bassCompInvThresholdLinear: Float
-    let bassCompMaxMakeupGain: Float
-    let softLimitDrive: Float
-    let softLimitDriveGain: Float
-    let stereoWidth: Float
-    let rearSurroundAmount: Float
-    let rearSurroundDelaySamples: Int
-    let rearSurroundShadow: Float
-    let crossTalkCancelAmount: Float
-    let crossTalkDelaySamples: Int
-    let sampleRate: Float
-    let maxRealtimeLatencySeconds: Float
-    // Diagnostic-only parameters
-    let listenerDistanceCm: Float
-    let headHeightCm: Float
-    let displayAngleDegrees: Float
-    let spatialStrengthPercent: Float
-    // Felt-bass stages (0 = bypass)
-    let bassMonoCutoffHz: Float
-    let loudnessAmount: Float
-}
-
 let rtActiveConfig = ManagedAtomic<UnsafeMutablePointer<DSPConfig>?>(nil)
 
 // RCU Reader count state
@@ -108,69 +60,7 @@ let rtReaderCount = ManagedAtomic<Int>(0)
 nonisolated(unsafe) var rtRetiredConfigs: [UnsafeMutablePointer<DSPConfig>] = []
 nonisolated(unsafe) var rtCleanupInProgress = false
 
-let fallbackDSPConfig = DSPConfig(
-    bassHarmonicsAmount: 0,
-    bassHarmonicsCutoffHz: 140,
-    bassHarmonicsSpeakerCutoffHz: 140,
-    bassHarmonicsLowpass: BiquadCoefficients(
-        b0: 0.000_082_883_7,
-        b1: 0.000_165_767_4,
-        b2: 0.000_082_883_7,
-        a1: -1.974_080_791_7,
-        a2: 0.974_412_326_4
-    ),
-    bassHarmonicsBandpass: BiquadCoefficients(
-        b0: 0.017_988_250_2,
-        b1: 0,
-        b2: -0.017_988_250_2,
-        a1: -1.961_386_490_5,
-        a2: 0.964_023_499_5
-    ),
-    bassHarmonicsDCPole: 0.997_385_430_1,
-    bassHarmonicsEnvelopeAttack: 0.004_157_998_2,
-    bassHarmonicsEnvelopeRelease: 0.000_260_382_8,
-    bassFocusAmount: 0,
-    bassFocusThresholdDb: -18,
-    bassFocusMaxHighCutDb: 7,
-    bassFocusMaxHighCutGain: 0.446_683_592_2,
-    lowEndGuardAmount: 0,
-    lowEndGuardThresholdDb: -18,
-    lowEndGuardThresholdLinear: 0.125_892_541_2,
-    lowEndGuardCutoffHz: 180,
-    lowEndGuardRatio: 4,
-    lowEndGuardMaxReductionDb: 4.5,
-    lowEndGuardMaxReductionGain: 0.595_662_143_5,
-    bassCompAmount: 0,
-    bassCompLowpass: BiquadCoefficients(
-        b0: 0.000_168_225,
-        b1: 0.000_336_450,
-        b2: 0.000_168_225,
-        a1: -1.962_975_817,
-        a2: 0.963_648_000
-    ),
-    bassCompEnvelopeAttack: 0.001_734_607,
-    bassCompEnvelopeRelease: 0.000_115_734,
-    bassCompGainSmoothing: 0.002_081_164,
-    bassCompThresholdLinear: 0.031_622_776_6,
-    bassCompInvThresholdLinear: 31.622_776_6,
-    bassCompMaxMakeupGain: 1,
-    softLimitDrive: 0,
-    softLimitDriveGain: 1,
-    stereoWidth: 0,
-    rearSurroundAmount: 0,
-    rearSurroundDelaySamples: 0,
-    rearSurroundShadow: 55,
-    crossTalkCancelAmount: 0,
-    crossTalkDelaySamples: 1,
-    sampleRate: 48000,
-    maxRealtimeLatencySeconds: 0.012,
-    listenerDistanceCm: defaultSpatialListenerDistanceCm,
-    headHeightCm: defaultSpatialHeadHeightCm,
-    displayAngleDegrees: defaultSpatialDisplayAngleDegrees,
-    spatialStrengthPercent: defaultSpatialStrengthPercent,
-    bassMonoCutoffHz: 0,
-    loudnessAmount: 0
-)
+let fallbackDSPConfig = DSPConfig()
 
 func currentFallbackConfig() -> DSPConfig {
     fallbackDSPConfig
@@ -260,25 +150,11 @@ struct DSPResources {
     let bassFocusLowpassStateCapacity: Int
     let lowEndGuardLowpassState: UnsafeMutablePointer<Float>
     let lowEndGuardLowpassStateCapacity: Int
-    let bassCompLowpassState1: UnsafeMutablePointer<Float>
-    let bassCompLowpassState2: UnsafeMutablePointer<Float>
-    let bassCompEnvelopeState: UnsafeMutablePointer<Float>
-    let bassCompGainState: UnsafeMutablePointer<Float>
     // Felt-bass stage states (pre-allocated, mutated on the render thread)
-    let bassMonoLowpassState: UnsafeMutablePointer<Float>
-    let bassMonoLowpassStateCapacity: Int
-    let bassMonoTempBuffer: UnsafeMutablePointer<Float>
-    let bassMonoTempCapacity: Int
     let loudnessLowpassState: UnsafeMutablePointer<Float>
     let loudnessLowpassStateCapacity: Int
 
     // Rear surround delay lines and lowpass states
-    let rearDelayLineLeft: UnsafeMutablePointer<Float>?
-    let rearDelayLineRight: UnsafeMutablePointer<Float>?
-    let rearDelayLineCapacity: Int
-    var rearDelayLineIndex: Int
-    var rearLowpassLeft: Float
-    var rearLowpassRight: Float
 
     // Dynamic states mutated on the real-time callback thread
     var bassFocusEnvelope: Float
@@ -311,15 +187,7 @@ func deallocateResources(_ ptr: UnsafeMutablePointer<DSPResources>) {
     ptr.pointee.bassHarmonicsEnvelopeState.deallocate()
     ptr.pointee.bassFocusLowpassState.deallocate()
     ptr.pointee.lowEndGuardLowpassState.deallocate()
-    ptr.pointee.bassCompLowpassState1.deallocate()
-    ptr.pointee.bassCompLowpassState2.deallocate()
-    ptr.pointee.bassCompEnvelopeState.deallocate()
-    ptr.pointee.bassCompGainState.deallocate()
-    ptr.pointee.bassMonoLowpassState.deallocate()
-    ptr.pointee.bassMonoTempBuffer.deallocate()
     ptr.pointee.loudnessLowpassState.deallocate()
-    ptr.pointee.rearDelayLineLeft?.deallocate()
-    ptr.pointee.rearDelayLineRight?.deallocate()
 
     // Release the ring buffer reference (decrement ARC count)
     ptr.pointee.ringBuffer.release()
@@ -381,7 +249,6 @@ func purgeResources() {
 func setupResources(sampleRate: Double, channels: Int, ringBuf: AudioRingBuffer) {
     let preallocCapacity = 8192 * channels
     let lowpassCapacity = max(16, channels)
-    let surroundCapacity = max(1024, Int(sampleRate * 0.06))
 
     let scratch = UnsafeMutablePointer<Float>.allocate(capacity: preallocCapacity)
     let dry = UnsafeMutablePointer<Float>.allocate(capacity: preallocCapacity)
@@ -397,12 +264,6 @@ func setupResources(sampleRate: Double, channels: Int, ringBuf: AudioRingBuffer)
     let bassEnv = UnsafeMutablePointer<Float>.allocate(capacity: lowpassCapacity)
     let lpBF = UnsafeMutablePointer<Float>.allocate(capacity: lowpassCapacity)
     let lpLEG = UnsafeMutablePointer<Float>.allocate(capacity: lowpassCapacity)
-    let bcLP1 = UnsafeMutablePointer<Float>.allocate(capacity: lowpassCapacity)
-    let bcLP2 = UnsafeMutablePointer<Float>.allocate(capacity: lowpassCapacity)
-    let bcEnv = UnsafeMutablePointer<Float>.allocate(capacity: lowpassCapacity)
-    let bcGain = UnsafeMutablePointer<Float>.allocate(capacity: lowpassCapacity)
-    let monoLP = UnsafeMutablePointer<Float>.allocate(capacity: lowpassCapacity)
-    let monoTemp = UnsafeMutablePointer<Float>.allocate(capacity: lowpassCapacity)
     let loudLP = UnsafeMutablePointer<Float>.allocate(capacity: lowpassCapacity)
 
     scratch.initialize(repeating: 0, count: preallocCapacity)
@@ -419,24 +280,7 @@ func setupResources(sampleRate: Double, channels: Int, ringBuf: AudioRingBuffer)
     bassEnv.initialize(repeating: 0, count: lowpassCapacity)
     lpBF.initialize(repeating: 0, count: lowpassCapacity)
     lpLEG.initialize(repeating: 0, count: lowpassCapacity)
-    bcLP1.initialize(repeating: 0, count: lowpassCapacity)
-    bcLP2.initialize(repeating: 0, count: lowpassCapacity)
-    bcEnv.initialize(repeating: 0, count: lowpassCapacity)
-    bcGain.initialize(repeating: 1, count: lowpassCapacity)
-    monoLP.initialize(repeating: 0, count: lowpassCapacity)
-    monoTemp.initialize(repeating: 0, count: lowpassCapacity)
     loudLP.initialize(repeating: 0, count: lowpassCapacity)
-
-    var delayL: UnsafeMutablePointer<Float>? = nil
-    var delayR: UnsafeMutablePointer<Float>? = nil
-    if channels >= 2 {
-        let dl = UnsafeMutablePointer<Float>.allocate(capacity: surroundCapacity)
-        let dr = UnsafeMutablePointer<Float>.allocate(capacity: surroundCapacity)
-        dl.initialize(repeating: 0, count: surroundCapacity)
-        dr.initialize(repeating: 0, count: surroundCapacity)
-        delayL = dl
-        delayR = dr
-    }
 
     let ringBufUnmanaged = Unmanaged.passRetained(ringBuf)
 
@@ -464,22 +308,8 @@ func setupResources(sampleRate: Double, channels: Int, ringBuf: AudioRingBuffer)
         bassFocusLowpassStateCapacity: lowpassCapacity,
         lowEndGuardLowpassState: lpLEG,
         lowEndGuardLowpassStateCapacity: lowpassCapacity,
-        bassCompLowpassState1: bcLP1,
-        bassCompLowpassState2: bcLP2,
-        bassCompEnvelopeState: bcEnv,
-        bassCompGainState: bcGain,
-        bassMonoLowpassState: monoLP,
-        bassMonoLowpassStateCapacity: lowpassCapacity,
-        bassMonoTempBuffer: monoTemp,
-        bassMonoTempCapacity: lowpassCapacity,
         loudnessLowpassState: loudLP,
         loudnessLowpassStateCapacity: lowpassCapacity,
-        rearDelayLineLeft: delayL,
-        rearDelayLineRight: delayR,
-        rearDelayLineCapacity: channels >= 2 ? surroundCapacity : 0,
-        rearDelayLineIndex: 0,
-        rearLowpassLeft: 0,
-        rearLowpassRight: 0,
         bassFocusEnvelope: 0,
         bassFocusCurrentHighGain: 1,
         lowEndGuardCurrentLowGain: 1,
@@ -585,10 +415,10 @@ func renderCallback(
     }
     let scratch = resourcesPtr.pointee.scratchBuffer
 
-    // Keep two render quanta plus the requested latency. If the render callback runs
-    // just before the input callback, this still leaves the requested latency queued.
+    // Retain one output quantum of scheduling margin. Capacity is not latency;
+    // stale frames are trimmed before rendering rather than accumulating delay.
     let requestedLatencySamples = Int(config.sampleRate * config.maxRealtimeLatencySeconds) * ch
-    let maxBufferedSamples = max(interleavedCount, interleavedCount * 2 + requestedLatencySamples)
+    let maxBufferedSamples = interleavedCount + max(interleavedCount, requestedLatencySamples)
     if rtNeedsPriming.load(ordering: .relaxed) != 0 {
         let available = max(ringBuf.availableToRead, 0)
         rtAvailableSamples.store(UInt64(available), ordering: .relaxed)
@@ -668,108 +498,6 @@ func clearOutputBuffers(_ audioBufferList: UnsafeMutablePointer<AudioBufferList>
     }
 }
 
-func estimatedCrossTalkDelaySamples(
-    sampleRate: Double,
-    listenerDistanceCm: Float,
-    headHeightCm: Float
-) -> Int {
-    let speakerSpacingMeters = 0.26
-    let listeningDistanceMeters = Double(max(listenerDistanceCm, 25)) / 100
-    let headHeightMeters = Double(max(headHeightCm, 0)) / 100
-    let earSpacingMeters = 0.18
-    let speedOfSoundMetersPerSecond = 343.0
-    let ipsilateralX = (speakerSpacingMeters - earSpacingMeters) * 0.5
-    let contralateralX = (speakerSpacingMeters + earSpacingMeters) * 0.5
-    let ipsilateralDistance = sqrt(
-        ipsilateralX * ipsilateralX
-            + listeningDistanceMeters * listeningDistanceMeters
-            + headHeightMeters * headHeightMeters
-    )
-    let contralateralDistance = sqrt(
-        contralateralX * contralateralX
-            + listeningDistanceMeters * listeningDistanceMeters
-            + headHeightMeters * headHeightMeters
-    )
-    let delaySeconds = max(0.00005, (contralateralDistance - ipsilateralDistance) / speedOfSoundMetersPerSecond)
-    return max(1, Int((delaySeconds * sampleRate).rounded()))
-}
-
-func modeledRearDelayMilliseconds(for surround: SurroundEffectConfig) -> Float {
-    let listenerDistanceCm = finiteOrDefault(surround.listenerDistanceCm, default: defaultSpatialListenerDistanceCm)
-    let headHeightCm = finiteOrDefault(surround.headHeightCm, default: defaultSpatialHeadHeightCm)
-    let displayAngleDegrees = finiteOrDefault(surround.displayAngleDegrees, default: defaultSpatialDisplayAngleDegrees)
-    let rearDelayMs = finiteOrDefault(surround.rearDelayMs, default: 4.2)
-    let distanceDelta = (listenerDistanceCm - defaultSpatialListenerDistanceCm) / 10
-    let heightDelta = (headHeightCm - defaultSpatialHeadHeightCm) / 10
-    let angleDelta = (displayAngleDegrees - defaultSpatialDisplayAngleDegrees) / 15
-    let modeled = rearDelayMs
-        + distanceDelta * 0.30
-        + heightDelta * 0.18
-        + angleDelta * 0.35
-    return min(max(modeled, 0.5), 30)
-}
-
-func modeledRearShadow(for surround: SurroundEffectConfig) -> Float {
-    let headHeightCm = finiteOrDefault(surround.headHeightCm, default: defaultSpatialHeadHeightCm)
-    let displayAngleDegrees = finiteOrDefault(surround.displayAngleDegrees, default: defaultSpatialDisplayAngleDegrees)
-    let rearShadow = finiteOrDefault(surround.rearShadow, default: 55)
-    let heightDelta = (headHeightCm - defaultSpatialHeadHeightCm) / 10
-    let angleDelta = (displayAngleDegrees - defaultSpatialDisplayAngleDegrees) / 15
-    let modeled = rearShadow
-        + heightDelta * 5
-        + angleDelta * 3
-    return min(max(modeled, 0), 100)
-}
-
-func modeledSpatialStrength(for surround: SurroundEffectConfig) -> Float {
-    min(max(surround.spatialStrengthPercent / 100, 0.60), 1.40)
-}
-
-func modeledReverbWetDryMix(for surround: SurroundEffectConfig) -> Float {
-    let spatialStrength = modeledSpatialStrength(for: surround)
-    return min(max(surround.reverbMix * (0.90 + spatialStrength * 0.10), 0), 50)
-}
-
-/// Folds low frequencies to mono: out-of-phase bass between left and right
-/// partly cancels on small speakers, sounding thin. Summing the lows keeps
-/// the energy and makes kick/bass feel tighter. Frequencies above the cutoff
-/// keep their stereo image untouched.
-func applyBassMono(
-    _ samples: UnsafeMutablePointer<Float>,
-    frames: Int,
-    channels: Int,
-    config: DSPConfig,
-    resources: UnsafeMutablePointer<DSPResources>
-) {
-    guard channels >= 2,
-          config.bassMonoCutoffHz > 0.5,
-          resources.pointee.bassMonoLowpassStateCapacity >= channels,
-          resources.pointee.bassMonoTempCapacity >= channels else { return }
-
-    let cutoff = min(max(config.bassMonoCutoffHz, 40), 300)
-    let alpha = min(max((2 * Float.pi * cutoff) / (2 * Float.pi * cutoff + config.sampleRate), 0.003), 0.5)
-    let lowpassState = resources.pointee.bassMonoLowpassState
-    let temp = resources.pointee.bassMonoTempBuffer
-    let channelDivisor = Float(channels)
-
-    for frame in 0..<frames {
-        let base = frame * channels
-        var monoSum: Float = 0
-        for channel in 0..<channels {
-            let index = base + channel
-            let low = lowpassState[channel] + alpha * (samples[index] - lowpassState[channel])
-            lowpassState[channel] = low
-            temp[channel] = low
-            monoSum += low
-        }
-        let monoLow = monoSum / channelDivisor
-        for channel in 0..<channels {
-            let index = base + channel
-            samples[index] = (samples[index] - temp[channel]) + monoLow
-        }
-    }
-}
-
 /// Loudness compensation: human hearing is much less sensitive to bass at low
 /// volumes (Fletcher-Munson), so quiet listening feels thin. This lifts the
 /// lows progressively as the system volume drops, fading to zero near maximum
@@ -779,20 +507,20 @@ func applyLoudness(
     frames: Int,
     channels: Int,
     config: DSPConfig,
+    outputVolume: Float,
     resources: UnsafeMutablePointer<DSPResources>
 ) {
     guard frames > 0, channels > 0, config.loudnessAmount > 0.0001 else { return }
     guard resources.pointee.loudnessLowpassStateCapacity >= channels else { return }
 
-    let volume = loadRealtimeOutputVolumeScalar()
+    let volume = outputVolume
     let depth = 1 - smoothstep(edge0: 0.25, edge1: 0.85, x: volume)
     // amount 0-100 maps to 0 to +6 dB of extra lows at minimum volume.
     let boost = min(max(config.loudnessAmount / 100, 0), 1) * depth
     guard boost > 0.0001 else { return }
 
     let lowpassState = resources.pointee.loudnessLowpassState
-    let cutoff: Float = 180
-    let alpha = min(max((2 * Float.pi * cutoff) / (2 * Float.pi * cutoff + config.sampleRate), 0.003), 0.12)
+    let alpha = config.loudnessAlpha
 
     for frame in 0..<frames {
         for channel in 0..<channels {
@@ -812,55 +540,13 @@ func applyRealtimeEffects(
     config: DSPConfig,
     resources: UnsafeMutablePointer<DSPResources>
 ) {
-    // Mono-ize the lows first so every downstream stage (comp, harmonics,
-    // guard) works on summed low energy instead of partially cancelling
-    // out-of-phase bass between left and right.
-    applyBassMono(samples, frames: frames, channels: channels, config: config, resources: resources)
-
-    if config.bassCompAmount > 0.0001, resources.pointee.lowpassStateCapacity >= channels {
-        let lowpass = config.bassCompLowpass
-        let state1 = resources.pointee.bassCompLowpassState1
-        let state2 = resources.pointee.bassCompLowpassState2
-        let envelopeState = resources.pointee.bassCompEnvelopeState
-        let gainState = resources.pointee.bassCompGainState
-        let attack = config.bassCompEnvelopeAttack
-        let release = config.bassCompEnvelopeRelease
-        let gainSmoothing = config.bassCompGainSmoothing
-        let threshold = config.bassCompThresholdLinear
-        let invThreshold = config.bassCompInvThresholdLinear
-        let maxMakeup = config.bassCompMaxMakeupGain
-
-        for frame in 0..<frames {
-            for channel in 0..<channels {
-                let index = frame * channels + channel
-                let input = samples[index]
-                let low = lowpass.b0 * input + state1[channel]
-                state1[channel] = lowpass.b1 * input - lowpass.a1 * low + state2[channel]
-                state2[channel] = lowpass.b2 * input - lowpass.a2 * low
-                let high = input - low
-
-                let detector = fabsf(low)
-                var envelope = envelopeState[channel]
-                envelope += (detector - envelope) * (detector > envelope ? attack : release)
-                envelopeState[channel] = envelope
-
-                // Upward compression: makeup ramps linearly from 1 (at threshold)
-                // to maxMakeup (at silence); envelope of true silence is 0, so
-                // silence-in still yields silence-out (gain * 0 == 0).
-                let position = min(max((threshold - envelope) * invThreshold, 0), 1)
-                let targetGain = 1 + (maxMakeup - 1) * position
-                var gain = gainState[channel]
-                gain += (targetGain - gain) * gainSmoothing
-                gainState[channel] = gain
-
-                samples[index] = low * gain + high
-            }
-        }
-    }
+    let volume = loadRealtimeOutputVolumeScalar()
+    // Fixed speaker order: Loudness -> Harmonics -> Focus -> Guard.
+    // EQ and final protection follow in SpeakerAudioGraph.
 
     // Loudness lift next: quiet-volume low boost before harmonics are
     // derived, so the generated harmonics also benefit from the lift.
-    applyLoudness(samples, frames: frames, channels: channels, config: config, resources: resources)
+    applyLoudness(samples, frames: frames, channels: channels, config: config, outputVolume: volume, resources: resources)
 
     if config.bassHarmonicsAmount > 0.0001, resources.pointee.lowpassStateCapacity >= channels {
         let lowpassState1 = resources.pointee.lowpassState
@@ -918,36 +604,10 @@ func applyRealtimeEffects(
         }
     }
 
-    applyBassFocus(samples, frames: frames, channels: channels, config: config, resources: resources)
-    applyRearSurround(samples, frames: frames, channels: channels, config: config, resources: resources)
+    applyBassFocus(samples, frames: frames, channels: channels, config: config, outputVolume: volume, resources: resources)
 
-    if channels >= 2, config.stereoWidth > 0.0001 {
-        let widthGain = 1 + min(max(config.stereoWidth / 100, 0), 1) * 0.85
-        for frame in 0..<frames {
-            let leftIndex = frame * channels
-            let rightIndex = leftIndex + 1
-            let left = samples[leftIndex]
-            let right = samples[rightIndex]
-            let mid = (left + right) * 0.5
-            let side = (left - right) * 0.5 * widthGain
-            samples[leftIndex] = mid + side
-            samples[rightIndex] = mid - side
-        }
-    }
+    applyLowEndGuard(samples, frames: frames, channels: channels, config: config, outputVolume: volume, resources: resources)
 
-    applyLowEndGuard(samples, frames: frames, channels: channels, config: config, resources: resources)
-
-    if config.softLimitDrive > 0.0001 {
-        // Pade approximation of tanh keeps the render path free of libm;
-        // |x| clamped to 3 where the approximation saturates at +/-1.
-        let driveGain = config.softLimitDriveGain
-        let total = frames * channels
-        for index in 0..<total {
-            let x = min(max(samples[index] * driveGain, -3), 3)
-            let x2 = x * x
-            samples[index] = x * (27 + x2) / (27 + 9 * x2)
-        }
-    }
 }
 
 func applyLowEndGuard(
@@ -955,6 +615,7 @@ func applyLowEndGuard(
     frames: Int,
     channels: Int,
     config: DSPConfig,
+    outputVolume: Float,
     resources: UnsafeMutablePointer<DSPResources>
 ) {
     guard frames > 0, channels > 0, config.lowEndGuardAmount > 0.0001 else {
@@ -965,7 +626,7 @@ func applyLowEndGuard(
     guard resources.pointee.lowEndGuardLowpassStateCapacity >= channels else { return }
     let lowpassState = resources.pointee.lowEndGuardLowpassState
 
-    let volumeActivation = smoothstep(edge0: 0.86, edge1: 1.0, x: loadRealtimeOutputVolumeScalar())
+    let volumeActivation = smoothstep(edge0: 0.86, edge1: 1.0, x: outputVolume)
     let amount = min(max(config.lowEndGuardAmount / 100, 0), 1) * volumeActivation
     guard amount > 0.0001 else {
         resources.pointee.lowEndGuardCurrentLowGain += (1 - resources.pointee.lowEndGuardCurrentLowGain) * 0.08
@@ -973,8 +634,7 @@ func applyLowEndGuard(
         return
     }
 
-    let cutoff = min(max(config.lowEndGuardCutoffHz, 90), 260)
-    let alpha = min(max((2 * Float.pi * cutoff) / (2 * Float.pi * cutoff + config.sampleRate), 0.003), 0.12)
+    let alpha = config.lowEndGuardAlpha
     let lowGain = min(max(resources.pointee.lowEndGuardCurrentLowGain, config.lowEndGuardMaxReductionGain), 1)
     var lowPeak: Float = 0
 
@@ -1024,6 +684,7 @@ func applyBassFocus(
     frames: Int,
     channels: Int,
     config: DSPConfig,
+    outputVolume: Float,
     resources: UnsafeMutablePointer<DSPResources>
 ) {
     guard frames > 0, channels > 0, config.bassFocusAmount > 0.0001 else {
@@ -1035,18 +696,16 @@ func applyBassFocus(
     guard resources.pointee.bassFocusLowpassStateCapacity >= channels else { return }
     let lowpassState = resources.pointee.bassFocusLowpassState
 
-    let systemVolume = loadRealtimeOutputVolumeScalar()
+    let systemVolume = outputVolume
     let target = smoothstep(edge0: 0.58, edge1: 0.92, x: systemVolume)
     let smoothing: Float = target > resources.pointee.bassFocusEnvelope ? 0.16 : 0.025
     resources.pointee.bassFocusEnvelope += (target - resources.pointee.bassFocusEnvelope) * smoothing
 
-    let amount = min(max(config.bassFocusAmount / 100, 0), 1)
     let targetHighGain = 1 + (config.bassFocusMaxHighCutGain - 1) * resources.pointee.bassFocusEnvelope
     let gainSmoothing: Float = targetHighGain < resources.pointee.bassFocusCurrentHighGain ? 0.16 : 0.025
     resources.pointee.bassFocusCurrentHighGain += (targetHighGain - resources.pointee.bassFocusCurrentHighGain) * gainSmoothing
     let highGain = min(max(resources.pointee.bassFocusCurrentHighGain, config.bassFocusMaxHighCutGain), 1)
-    let cutoff = 2_650 - amount * 950
-    let alpha = min(max((2 * Float.pi * cutoff) / (2 * Float.pi * cutoff + config.sampleRate), 0.02), 0.45)
+    let alpha = config.bassFocusAlpha
 
     for frame in 0..<frames {
         for channel in 0..<channels {
@@ -1057,60 +716,4 @@ func applyBassFocus(
             samples[index] = low + (input - low) * highGain
         }
     }
-}
-
-func applyRearSurround(
-    _ samples: UnsafeMutablePointer<Float>,
-    frames: Int,
-    channels: Int,
-    config: DSPConfig,
-    resources: UnsafeMutablePointer<DSPResources>
-) {
-    guard channels >= 2,
-          config.rearSurroundAmount > 0.0001,
-          resources.pointee.rearDelayLineCapacity > 1,
-          let delayLeft = resources.pointee.rearDelayLineLeft,
-          let delayRight = resources.pointee.rearDelayLineRight else { return }
-
-    let amount = min(max(config.rearSurroundAmount / 100, 0), 1)
-    let wet = 0.18 + amount * 0.34
-    let selfCancel = 0.12 + amount * 0.12
-    let dryTrim = 1 - wet * 0.10
-    let delaySamples = min(max(config.rearSurroundDelaySamples, 1), resources.pointee.rearDelayLineCapacity - 1)
-    let crossTalkDelaySamples = min(max(config.crossTalkDelaySamples, 1), resources.pointee.rearDelayLineCapacity - 1)
-    let crossTalkCancel = min(max(config.crossTalkCancelAmount, 0), 0.26)
-    let shadow = min(max(config.rearSurroundShadow / 100, 0), 1)
-    let cutoff = 5_800 - shadow * 3_900
-    let alpha = min(max((2 * Float.pi * cutoff) / (2 * Float.pi * cutoff + config.sampleRate), 0.02), 0.65)
-    var index = resources.pointee.rearDelayLineIndex
-
-    for frame in 0..<frames {
-        let leftIndex = frame * channels
-        let rightIndex = leftIndex + 1
-        let left = samples[leftIndex]
-        let right = samples[rightIndex]
-        let readIndex = (index - delaySamples + resources.pointee.rearDelayLineCapacity) % resources.pointee.rearDelayLineCapacity
-        let crossTalkReadIndex = (index - crossTalkDelaySamples + resources.pointee.rearDelayLineCapacity) % resources.pointee.rearDelayLineCapacity
-        let delayedLeft = delayLeft[readIndex]
-        let delayedRight = delayRight[readIndex]
-        let crossTalkLeft = delayLeft[crossTalkReadIndex]
-        let crossTalkRight = delayRight[crossTalkReadIndex]
-
-        delayLeft[index] = left
-        delayRight[index] = right
-        index += 1
-        if index >= resources.pointee.rearDelayLineCapacity {
-            index = 0
-        }
-
-        resources.pointee.rearLowpassLeft += alpha * (delayedLeft - resources.pointee.rearLowpassLeft)
-        resources.pointee.rearLowpassRight += alpha * (delayedRight - resources.pointee.rearLowpassRight)
-
-        let rearToLeft = resources.pointee.rearLowpassRight - resources.pointee.rearLowpassLeft * selfCancel
-        let rearToRight = resources.pointee.rearLowpassLeft - resources.pointee.rearLowpassRight * selfCancel
-        samples[leftIndex] = left * dryTrim - crossTalkRight * crossTalkCancel + rearToLeft * wet
-        samples[rightIndex] = right * dryTrim - crossTalkLeft * crossTalkCancel + rearToRight * wet
-    }
-
-    resources.pointee.rearDelayLineIndex = index
 }

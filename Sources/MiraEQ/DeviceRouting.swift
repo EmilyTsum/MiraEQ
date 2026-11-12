@@ -36,7 +36,7 @@ final class DeviceRoutingController {
     private(set) var tuning = DeviceTuning()
     private(set) var lastError: Error?
 
-    var effectiveConfig: EQConfig? { baseConfig.map { tuning.applying(to: $0) } }
+    var effectiveConfig: EQConfig? { baseConfig.map { SpeakerEngineProfile.prepare(tuning.applying(to: $0)) } }
 
     init(store: ConfigurationStore = ConfigurationStore()) {
         self.store = store

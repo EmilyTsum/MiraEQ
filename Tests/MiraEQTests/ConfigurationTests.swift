@@ -109,7 +109,7 @@ final class DeviceTuningTests: XCTestCase {
                                                   bassCompAmount: 0, bassCompCrossoverHz: 190, softLimitDrive: 0))
     }
 
-    func testBuiltInPresetKeepsItsExistingSoundConfiguration() throws {
+    func testBuiltInPresetMatchesDedicatedSpeakerProfile() throws {
         let fixture = try ConfigurationFixture()
         let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         try fixture.store.prepareSupportFiles(bundledPresetRoots: [repo.appendingPathComponent("presets")])
@@ -118,14 +118,14 @@ final class DeviceTuningTests: XCTestCase {
         try fixture.store.writeRouting([DeviceMapping(pattern: "Speakers", devicePresetFile: preset, addOnPresetFile: hidden)])
         try verifyRoundTrip(devicePresetName: preset, addOnPresetName: hidden, store: fixture.store)
         let config = try effectiveConfig(devicePresetName: preset, addOnPresetName: hidden, store: fixture.store)
-        XCTAssertEqual(config.preamp, -4)
+        XCTAssertEqual(config.preamp, 0)
         XCTAssertEqual(config.bands.count, 11)
         XCTAssertEqual(config.effects.latency.targetMs, 1)
-        XCTAssertEqual(config.effects.bassHarmonics.amount, 14)
+        XCTAssertEqual(config.effects.bassHarmonics.amount, 8)
         XCTAssertEqual(config.effects.bassFocus.amountPercent, 70)
-        XCTAssertEqual(config.effects.bassComp.amountPercent, 50)
+        XCTAssertEqual(config.effects.bassComp.amountPercent, 0)
         XCTAssertEqual(config.effects.lowEndGuard.maxReductionDb, 5)
-        XCTAssertEqual(config.effects.bassMono.cutoffHz, 120)
+        XCTAssertEqual(config.effects.bassMono.cutoffHz, 0)
         XCTAssertEqual(config.effects.loudness.amount, 50)
         XCTAssertFalse(config.effects.surround.isEnabled)
         XCTAssertFalse(config.effects.softLimit.isEnabled)
@@ -147,7 +147,7 @@ final class DeviceRoutingTests: XCTestCase {
         XCTAssertNil(routing.effectiveConfig)
         XCTAssertEqual(try fixture.store.loadRouting().first?.addOnPresetFile, hidden)
         try routing.selectPreset("B.txt")
-        XCTAssertEqual(routing.effectiveConfig?.preamp, -8)
+        XCTAssertEqual(routing.baseConfig?.preamp, -8)
         XCTAssertEqual(routing.tuning.bassFocusAmount, 70)
         XCTAssertEqual(routing.effectiveConfig?.effects.bassHarmonics.amount, 0)
         routing.reload()
@@ -169,7 +169,7 @@ final class DeviceRoutingTests: XCTestCase {
         XCTAssertNil(routing.effectiveConfig)
         try routing.selectPreset("B.txt")
         routing.selectDevice(OutputDevice(id: 3, name: "Renamed USB Audio", uid: "uid-1"))
-        XCTAssertEqual(routing.effectiveConfig?.preamp, -4)
+        XCTAssertEqual(routing.baseConfig?.preamp, -4)
         XCTAssertEqual(routing.tuning.bassFocusAmount, 70)
         XCTAssertEqual(routing.mappings.map(\.pattern), ["uid-2", "uid-1"])
     }
@@ -184,7 +184,7 @@ final class DeviceRoutingTests: XCTestCase {
         let routing = DeviceRoutingController(store: fixture.store)
         routing.reload()
         routing.selectDevice(OutputDevice(id: 1, name: "Speakers", uid: "uid-1"))
-        XCTAssertEqual(routing.effectiveConfig?.preamp, -4)
+        XCTAssertEqual(routing.baseConfig?.preamp, -4)
         try routing.selectPreset(nil)
         XCTAssertEqual(routing.mappings.count, 1)
         XCTAssertNil(routing.effectiveConfig)
@@ -206,7 +206,7 @@ final class DeviceRoutingTests: XCTestCase {
         try fixture.writePreset("Missing.txt", content: "Preamp: -9 dB\n")
         routing.reload()
         XCTAssertNil(routing.lastError)
-        XCTAssertEqual(routing.effectiveConfig?.preamp, -9)
+        XCTAssertEqual(routing.baseConfig?.preamp, -9)
     }
 
     @MainActor

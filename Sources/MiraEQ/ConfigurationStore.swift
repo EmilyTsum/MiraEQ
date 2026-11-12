@@ -82,7 +82,7 @@ struct ConfigurationStore {
 
     func availableDevicePresets() -> [(file: String, title: String)] {
         let files = (try? FileManager.default.contentsOfDirectory(at: devicePresetDirectory, includingPropertiesForKeys: nil)) ?? []
-        return files.filter { $0.pathExtension.lowercased() == "txt" && $0.lastPathComponent.lowercased() != "config.txt" }
+        return files.filter { $0.lastPathComponent == SpeakerEngineProfile.presetName }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
             .map { ($0.lastPathComponent, presetTitle(at: $0)) }
     }

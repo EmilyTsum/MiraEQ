@@ -16,7 +16,7 @@ func effectiveConfig(
     store: ConfigurationStore = ConfigurationStore()
 ) throws -> EQConfig {
     let pair = try loadPresetPair(devicePresetName: devicePresetName, addOnPresetName: addOnPresetName, store: store)
-    return pair.tuning.applying(to: pair.device)
+    return SpeakerEngineProfile.prepare(pair.tuning.applying(to: pair.device))
 }
 
 func verifyRoundTrip(

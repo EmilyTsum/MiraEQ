@@ -1,24 +1,15 @@
-# MiraEQ Preset: MacBook Air 13 Rich (MacBook Pro-like body)
-# Based on M5_MacBook_Air_Favorite. Restores lower-mid body (180-500 Hz)
-# that the Favorite preset carves out, for a weightier MacBook Pro-like
-# character, while keeping the boxiness cuts at 1-2 kHz.
-# 2026-07-15: +weight revision — more 64-250 Hz body, softer 500 Hz cut.
-# Preamp lowered to -5.5 dB for headroom (max gain +4.0 dB at 125 Hz plus
-# restored low-mid energy).
-# 2026-09-03: relative-bass revision — everything above 180 Hz cut by another
-# 2.5 dB so 64-180 Hz sits ~+2.5 dB relative without touching bass gains or
-# preamp (headroom unchanged, max gain still +4.0 dB at 125 Hz).
-# Preamp raised to -4.0 dB (peak 0 dB at max boost; dynamics + limiter
-# downstream absorb overs).
+# MiraEQ Preset: MacBook Air 13 Rich
+# Dedicated speaker profile; unity global gain, final peak protection in the engine.
 DeviceName: Speakers
-Preamp: -4.0 dB
+Preamp: 0 dB
 
-Effect: BassHarmonics amount 6 cutoff 135 Hz
+Effect: Latency target 1 ms
+Effect: BassFocus amount 70 threshold -18 highcut 7
+Effect: BassHarmonics amount 8 cutoff 135 Hz
 Effect: LowEndGuard amount 45 threshold -18 dB cutoff 180 Hz ratio 4 maxReduction 5.0 dB
-Effect: BassMono cutoff 120 Hz
 Effect: Loudness amount 50
 
-Filter 1: ON PK Fc 32 Hz Gain 0.0 dB Bandwidth 1.00
+Filter 1: ON HP Fc 55 Hz Gain 0.0 dB Bandwidth 1.00
 Filter 2: ON PK Fc 64 Hz Gain 2.20 dB Bandwidth 2.54
 Filter 3: ON PK Fc 125 Hz Gain 4.00 dB Bandwidth 1.17
 Filter 4: ON PK Fc 180 Hz Gain 2.20 dB Bandwidth 1.20

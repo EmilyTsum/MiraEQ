@@ -12,17 +12,6 @@ struct PresetSelection {
     let presetFile: String?
 }
 
-enum SpatialTuningComponent {
-    case listenerDistance
-    case strength
-    case reset
-}
-
-struct SpatialTuningSelection {
-    let component: SpatialTuningComponent
-    let value: Float
-}
-
 struct BassFocusSelection {
     let amountPercent: Float
     let shouldReset: Bool
@@ -30,18 +19,14 @@ struct BassFocusSelection {
 
 enum ProcessingTuningComponent {
     case latency
-    case spatialEnabled
     case bassHarmonics
     case lowEndGuard
-    case bassCompAmount
-    case softLimitDrive
     case reset
 }
 
 struct ProcessingTuningSelection {
     let component: ProcessingTuningComponent
     let latencyMode: LatencyMode?
-    let boolValue: Bool
     let amountPercent: Float
 }
 
@@ -76,8 +61,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, DeviceMonito
     var renderDiagnosticItem: NSMenuItem?
     var hardwareBufferDiagnosticItem: NSMenuItem?
     var formatDiagnosticItem: NSMenuItem?
-    var effectDelayDiagnosticItem: NSMenuItem?
-    var spatialDiagnosticItem: NSMenuItem?
     var bassFocusDiagnosticItem: NSMenuItem?
     var lowEndGuardDiagnosticItem: NSMenuItem?
     var finalSafetyDiagnosticItem: NSMenuItem?

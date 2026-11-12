@@ -130,8 +130,6 @@ extension AppDelegate {
         renderDiagnosticItem = disabledMenuItem(title: "")
         hardwareBufferDiagnosticItem = disabledMenuItem(title: "")
         formatDiagnosticItem = disabledMenuItem(title: "")
-        effectDelayDiagnosticItem = disabledMenuItem(title: "")
-        spatialDiagnosticItem = disabledMenuItem(title: "")
         bassFocusDiagnosticItem = disabledMenuItem(title: "")
         lowEndGuardDiagnosticItem = disabledMenuItem(title: "")
         finalSafetyDiagnosticItem = disabledMenuItem(title: "")
@@ -145,8 +143,6 @@ extension AppDelegate {
             renderDiagnosticItem,
             hardwareBufferDiagnosticItem,
             formatDiagnosticItem,
-            effectDelayDiagnosticItem,
-            spatialDiagnosticItem,
             bassFocusDiagnosticItem,
             lowEndGuardDiagnosticItem,
             finalSafetyDiagnosticItem,
@@ -167,8 +163,6 @@ extension AppDelegate {
             renderDiagnosticItem?.isHidden = true
             hardwareBufferDiagnosticItem?.isHidden = true
             formatDiagnosticItem?.isHidden = true
-            effectDelayDiagnosticItem?.isHidden = true
-            spatialDiagnosticItem?.isHidden = true
             bassFocusDiagnosticItem?.isHidden = true
             lowEndGuardDiagnosticItem?.isHidden = true
             finalSafetyDiagnosticItem?.isHidden = true
@@ -181,8 +175,6 @@ extension AppDelegate {
         renderDiagnosticItem?.isHidden = false
         hardwareBufferDiagnosticItem?.isHidden = false
         formatDiagnosticItem?.isHidden = false
-        effectDelayDiagnosticItem?.isHidden = diagnostics.effectDelayMs <= 0
-        spatialDiagnosticItem?.isHidden = false
         bassFocusDiagnosticItem?.isHidden = false
         lowEndGuardDiagnosticItem?.isHidden = false
         finalSafetyDiagnosticItem?.isHidden = false
@@ -199,15 +191,6 @@ extension AppDelegate {
         renderDiagnosticItem?.title = "Render Quantum: \(diagnostics.lastRenderFrameCount) frames / \(formatMilliseconds(diagnostics.renderBudgetMs)), idle \(diagnostics.idleRenderCallbacks)"
         hardwareBufferDiagnosticItem?.title = "Hardware Buffer: \(diagnostics.outputBufferFrames) out, \(diagnostics.aggregateBufferFrames) aggregate, \(diagnostics.requestedBufferFrames) requested"
         formatDiagnosticItem?.title = "Format: \(formatSampleRate(diagnostics.sampleRate)), \(diagnostics.channels) ch, in \(diagnostics.lastInputFrameCount) / out \(diagnostics.lastRenderFrameCount)"
-        effectDelayDiagnosticItem?.title = "Effect Delay: \(formatMilliseconds(diagnostics.effectDelayMs))"
-        spatialDiagnosticItem?.title = String(
-            format: "Spatial: %.0f cm, head %.0f cm, %.0f deg, %.0f%%, XTC %@",
-            diagnostics.spatialListenerDistanceCm,
-            diagnostics.spatialHeadHeightCm,
-            diagnostics.spatialDisplayAngleDegrees,
-            diagnostics.spatialStrengthPercent,
-            formatMilliseconds(diagnostics.crossTalkDelayMs)
-        )
         bassFocusDiagnosticItem?.title = String(
             format: "Bass Focus: %.0f%%, volume %.0f%%, high -%.1f dB",
             diagnostics.bassFocusAmountPercent,
@@ -221,7 +204,7 @@ extension AppDelegate {
             diagnostics.lowEndGuardMaxReductionDb,
             diagnostics.lowEndGuardPeakDb
         )
-        finalSafetyDiagnosticItem?.title = String(format: "Final Safety: comp -%.1f dB + peak limiter", diagnostics.finalSafetyCompressionDb)
+        finalSafetyDiagnosticItem?.title = "Final Safety: Peak Limiter"
 
         if let startedAt = diagnostics.startedAt {
             uptimeDiagnosticItem?.title = "Uptime: \(formatDuration(Date().timeIntervalSince(startedAt)))"
@@ -236,8 +219,6 @@ extension AppDelegate {
         renderDiagnosticItem = nil
         hardwareBufferDiagnosticItem = nil
         formatDiagnosticItem = nil
-        effectDelayDiagnosticItem = nil
-        spatialDiagnosticItem = nil
         bassFocusDiagnosticItem = nil
         lowEndGuardDiagnosticItem = nil
         finalSafetyDiagnosticItem = nil
@@ -312,10 +293,6 @@ extension AppDelegate {
         latencyItem.submenu = makeLatencyMenu()
         menu.addItem(latencyItem)
 
-        let spatialItem = NSMenuItem(title: "Spatial", action: nil, keyEquivalent: "")
-        spatialItem.submenu = makeSpatialMenu()
-        menu.addItem(spatialItem)
-
         let harmonicsItem = NSMenuItem(title: "Bass Harmonics", action: nil, keyEquivalent: "")
         harmonicsItem.submenu = makeBassHarmonicsMenu()
         menu.addItem(harmonicsItem)
@@ -328,14 +305,10 @@ extension AppDelegate {
         lowGuardItem.submenu = makeLowEndGuardMenu()
         menu.addItem(lowGuardItem)
 
-        let bassPowerItem = NSMenuItem(title: "Bass Power", action: nil, keyEquivalent: "")
-        bassPowerItem.submenu = makeBassPowerMenu()
-        menu.addItem(bassPowerItem)
-
         menu.addItem(.separator())
         let resetItem = NSMenuItem(title: "Reset Processing to Preset", action: #selector(selectProcessingTuningItem(_:)), keyEquivalent: "")
         resetItem.target = self
-        resetItem.representedObject = ProcessingTuningSelection(component: .reset, latencyMode: nil, boolValue: false, amountPercent: 0)
+        resetItem.representedObject = ProcessingTuningSelection(component: .reset, latencyMode: nil, amountPercent: 0)
         menu.addItem(resetItem)
 
         return menu
@@ -349,17 +322,7 @@ extension AppDelegate {
         return menu
     }
 
-    private func makeSpatialMenu() -> NSMenu {
-        let menu = NSMenu()
-        addProcessingItem(to: menu, title: "On", component: .spatialEnabled, boolValue: true)
-        addProcessingItem(to: menu, title: "Off", component: .spatialEnabled, boolValue: false)
-        menu.addItem(.separator())
 
-        let positionItem = NSMenuItem(title: "Position Model", action: nil, keyEquivalent: "")
-        positionItem.submenu = makeSpatialTuningMenu()
-        menu.addItem(positionItem)
-        return menu
-    }
 
     private func makeBassHarmonicsMenu() -> NSMenu {
         let menu = NSMenu()
@@ -381,36 +344,13 @@ extension AppDelegate {
         return menu
     }
 
-    private func makeBassPowerMenu() -> NSMenu {
-        let menu = NSMenu()
 
-        let bassCompItem = NSMenuItem(title: "BassComp", action: nil, keyEquivalent: "")
-        let bassCompMenu = NSMenu()
-        addProcessingItem(to: bassCompMenu, title: "Off", component: .bassCompAmount, amountPercent: 0)
-        addProcessingItem(to: bassCompMenu, title: "Light (25%)", component: .bassCompAmount, amountPercent: 25)
-        addProcessingItem(to: bassCompMenu, title: "Normal (50%)", component: .bassCompAmount, amountPercent: 50)
-        addProcessingItem(to: bassCompMenu, title: "Strong (75%)", component: .bassCompAmount, amountPercent: 75)
-        addProcessingItem(to: bassCompMenu, title: "Max (100%)", component: .bassCompAmount, amountPercent: 100)
-        bassCompItem.submenu = bassCompMenu
-        menu.addItem(bassCompItem)
-
-        let softLimitItem = NSMenuItem(title: "SoftLimit", action: nil, keyEquivalent: "")
-        let softLimitMenu = NSMenu()
-        addProcessingItem(to: softLimitMenu, title: "Off", component: .softLimitDrive, amountPercent: 0)
-        addProcessingItem(to: softLimitMenu, title: "Light (30%)", component: .softLimitDrive, amountPercent: 30)
-        addProcessingItem(to: softLimitMenu, title: "Strong (60%)", component: .softLimitDrive, amountPercent: 60)
-        softLimitItem.submenu = softLimitMenu
-        menu.addItem(softLimitItem)
-
-        return menu
-    }
 
     private func addProcessingItem(
         to menu: NSMenu,
         title: String,
         component: ProcessingTuningComponent,
         latencyMode: LatencyMode? = nil,
-        boolValue: Bool = false,
         amountPercent: Float = 0
     ) {
         let item = NSMenuItem(title: title, action: #selector(selectProcessingTuningItem(_:)), keyEquivalent: "")
@@ -418,23 +358,16 @@ extension AppDelegate {
         item.representedObject = ProcessingTuningSelection(
             component: component,
             latencyMode: latencyMode,
-            boolValue: boolValue,
             amountPercent: amountPercent
         )
 
         switch component {
         case .latency:
             item.state = latencyMode.map { abs(currentEffects.latency.targetMs - $0.targetMs) < 0.01 } == true ? .on : .off
-        case .spatialEnabled:
-            item.state = (currentEffects.surround.isEnabled || currentEffects.delay.isEnabled) == boolValue ? .on : .off
         case .bassHarmonics:
             item.state = abs(currentEffects.bassHarmonics.amount - amountPercent) < 0.5 ? .on : .off
         case .lowEndGuard:
             item.state = abs(currentEffects.lowEndGuard.amountPercent - amountPercent) < 0.5 ? .on : .off
-        case .bassCompAmount:
-            item.state = abs(currentEffects.bassComp.amountPercent - amountPercent) < 0.5 ? .on : .off
-        case .softLimitDrive:
-            item.state = abs(currentEffects.softLimit.drivePercent - amountPercent) < 0.5 ? .on : .off
         case .reset:
             item.state = .off
         }
@@ -455,72 +388,9 @@ extension AppDelegate {
         return menu
     }
 
-    private func makeSpatialTuningMenu() -> NSMenu {
-        let menu = NSMenu()
-        let summary = disabledMenuItem(
-            title: String(
-                format: "Distance: %.0f cm, Strength: %.0f%%",
-                currentEffects.surround.listenerDistanceCm,
-                currentEffects.surround.spatialStrengthPercent
-            )
-        )
-        menu.addItem(summary)
-        menu.addItem(.separator())
 
-        addSpatialOptionMenu(
-            to: menu,
-            title: "Distance",
-            component: .listenerDistance,
-            currentValue: currentEffects.surround.listenerDistanceCm,
-            options: [
-                ("35 cm", 35),
-                ("40 cm", 40),
-                ("45 cm", 45),
-                ("50 cm", 50)
-            ]
-        )
-        addSpatialOptionMenu(
-            to: menu,
-            title: "Strength",
-            component: .strength,
-            currentValue: currentEffects.surround.spatialStrengthPercent,
-            options: [
-                ("Soft (80%)", 80),
-                ("Normal (100%)", 100),
-                ("Strong (120%)", 120)
-            ]
-        )
 
-        menu.addItem(.separator())
-        let resetItem = NSMenuItem(title: "Reset Spatial Model", action: #selector(selectSpatialTuningItem(_:)), keyEquivalent: "")
-        resetItem.target = self
-        resetItem.representedObject = SpatialTuningSelection(component: .reset, value: 0)
-        menu.addItem(resetItem)
 
-        return menu
-    }
-
-    private func addSpatialOptionMenu(
-        to menu: NSMenu,
-        title: String,
-        component: SpatialTuningComponent,
-        currentValue: Float,
-        options: [(String, Float)]
-    ) {
-        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        let submenu = NSMenu()
-
-        for option in options {
-            let optionItem = NSMenuItem(title: option.0, action: #selector(selectSpatialTuningItem(_:)), keyEquivalent: "")
-            optionItem.target = self
-            optionItem.representedObject = SpatialTuningSelection(component: component, value: option.1)
-            optionItem.state = abs(currentValue - option.1) < 0.5 ? .on : .off
-            submenu.addItem(optionItem)
-        }
-
-        item.submenu = submenu
-        menu.addItem(item)
-    }
 
     private func makeBassFocusMenu() -> NSMenu {
         let menu = NSMenu()
@@ -555,29 +425,15 @@ extension AppDelegate {
 
 extension AppDelegate {
 
-    @objc func selectSpatialTuningItem(_ sender: NSMenuItem) {
-        guard let selection = sender.representedObject as? SpatialTuningSelection else { return }
-        updateDeviceTuning { tuning in
-            switch selection.component {
-            case .listenerDistance: tuning.listenerDistanceCm = selection.value
-            case .strength: tuning.spatialStrengthPercent = selection.value
-            case .reset:
-                tuning.listenerDistanceCm = nil
-                tuning.spatialStrengthPercent = nil
-            }
-        }
-    }
+
 
     @objc func selectProcessingTuningItem(_ sender: NSMenuItem) {
         guard let selection = sender.representedObject as? ProcessingTuningSelection else { return }
         updateDeviceTuning { tuning in
             switch selection.component {
             case .latency: tuning.latencyTargetMs = selection.latencyMode?.targetMs
-            case .spatialEnabled: tuning.spatialEnabled = selection.boolValue
             case .bassHarmonics: tuning.bassHarmonicsAmount = selection.amountPercent
             case .lowEndGuard: tuning.lowEndGuardAmount = selection.amountPercent
-            case .bassCompAmount: tuning.bassCompAmount = selection.amountPercent
-            case .softLimitDrive: tuning.softLimitDrive = selection.amountPercent
             case .reset: tuning = DeviceTuning()
             }
         }
