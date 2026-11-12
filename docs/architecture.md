@@ -96,12 +96,30 @@ configuration to use on resume without waking capture. Playback detection and
 are private, keeping lifecycle changes serialized. Manual Restart is available
 whenever a usable route exists, including after a failed start.
 
+Silence standby requires both 120 seconds without audible samples and no other
+running output stream on the selected physical device. MiraEQ's own output is
+excluded. [Core Audio's output-running property](https://developer.apple.com/documentation/coreaudio/audiohardwareprocess/isrunningoutput)
+reports stream activity, not sample audibility. A browser can keep the same
+stream running through silence and resume sound without changing its process
+object. Such a stream must stay processed; after capture is torn down there is
+no observable playback edge on which to resume. The previous permanent baseline
+process exclusion could therefore leave EQ bypassed indefinitely.
+
+Standby resumes when any other process has a running stream on that device;
+there is no baseline exemption. Mute and zero volume still stop capture even
+with live streams. Missing hardware volume controls are treated as unknown,
+rather than zero, so those devices can resume. A failed process enumeration
+does not count as proof of stopped playback. Diagnostics are written once on
+standby, resume, and explicit stop transitions, in addition to active refreshes.
+
 ## Verification
 
 `swift build` checks the executable; `swift test` covers parser compatibility,
 sparse overrides, explicit off, precise serialization, the bundled effective
 configuration, routing identity, bypass/re-enable, failed I/O, and actual
-filesystem notifications for in-place/atomic saves and watcher shutdown.
+filesystem notifications for in-place/atomic saves and watcher shutdown. Standby
+policy tests cover persistent silent streams, returning process objects, mute,
+zero volume, unknown volume controls, and unavailable playback activity.
 Tests use temporary configuration directories and do not write the user's
 MiraEQ configuration or start a CoreAudio process tap.
 

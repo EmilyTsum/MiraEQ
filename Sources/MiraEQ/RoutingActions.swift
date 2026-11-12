@@ -20,6 +20,7 @@ extension AppDelegate {
         }
         updateIcon()
         updateRealtimeAudioActivity()
+        writeDiagnosticsSnapshot()
     }
 
     nonisolated func defaultOutputDeviceDidChange(to deviceID: AudioObjectID, isBuiltInSpeakers: Bool, name: String, uid: String) {

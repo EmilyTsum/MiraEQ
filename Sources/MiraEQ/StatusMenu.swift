@@ -59,7 +59,7 @@ extension AppDelegate {
         // Mute / zero volume always stops capture; this only controls the
         // silence-based trigger.
         let standbyToggle = NSMenuItem(
-            title: "Auto-Standby When Silent (2 min)",
+            title: "Auto-Standby After Playback Stops (2 min)",
             action: #selector(toggleSilenceStandby),
             keyEquivalent: ""
         )
@@ -649,6 +649,7 @@ extension AppDelegate {
             audioEngine.stop()
             updateIcon()
             updateRealtimeAudioActivity()
+            writeDiagnosticsSnapshot()
         }
     }
 

@@ -67,8 +67,6 @@ public final class AudioEngineManager {
     public private(set) var isInStandby = false
     private var standbyDeviceID: AudioObjectID?
     private var standbyConfig: EQConfig?
-    private var standbyBaselinePlayers: Set<AudioObjectID> = []
-    private let autoStandbySilenceSeconds: Double = 120
 
     /// When false, silence never triggers standby — only mute / zero volume
     /// does. Persisted by the app layer.
@@ -222,8 +220,17 @@ public final class AudioEngineManager {
         let muted = readOutputMute(deviceID: deviceID)
         let volumeIsZero = outputVolumeScalar <= 0.000_1
         let silentForSeconds = secondsSinceLastAudibleAudio()
-        let silenceTriggered = silenceStandbyEnabled && silentForSeconds >= autoStandbySilenceSeconds
-        if muted || volumeIsZero || silenceTriggered {
+        let silenceTriggered = silenceStandbyEnabled && silentForSeconds >= AutoStandbyPolicy.silenceDelaySeconds
+        let hasRunningOutput = silenceTriggered && !muted && !volumeIsZero
+            ? runningOutputProcessObjects(on: deviceID).map { !$0.isEmpty }
+            : nil
+        if AutoStandbyPolicy.shouldEnter(
+            muted: muted,
+            outputVolume: outputVolumeScalar,
+            silenceStandbyEnabled: silenceStandbyEnabled,
+            silentSeconds: silentForSeconds,
+            hasRunningOutput: hasRunningOutput
+        ) {
             os_log(.default, log: appLog,
                    "%{public}s entering standby (muted: %d, volumeZero: %d, silentSeconds: %.1f)",
                    AppInfo.displayName, muted ? 1 : 0, volumeIsZero ? 1 : 0, silentForSeconds)
@@ -231,13 +238,6 @@ public final class AudioEngineManager {
             standbyDeviceID = deviceID
             standbyConfig = config
             isInStandby = true
-            // Processes already emitting (silent) output when we entered
-            // standby (e.g. a browser holding an idle audio stream) must not
-            // count as a resume signal; only a playback start edge should.
-            // When we stopped because of mute/zero volume the user may still
-            // have something playing, so keep the baseline empty there and let
-            // unmuting resume immediately.
-            standbyBaselinePlayers = (muted || volumeIsZero) ? [] : runningOutputProcessObjects()
             startStandbyPolling()
             return true
         }
@@ -274,15 +274,12 @@ public final class AudioEngineManager {
     private func tryResumeFromStandby() -> Bool {
         guard isInStandby, let deviceID = standbyDeviceID, let config = standbyConfig else { return false }
 
-        let playersNow = runningOutputProcessObjects()
-        // A baseline process that stops releases its exemption, so its next
-        // playback start (a pause -> play in the same app) triggers resume.
-        standbyBaselinePlayers.formIntersection(playersNow)
-        let hasNewPlayer = !playersNow.subtracting(standbyBaselinePlayers).isEmpty
-
         let muted = readOutputMute(deviceID: deviceID)
-        let volume = readOutputVolumeScalar(deviceID: deviceID) ?? 0
-        guard !muted, volume > 0.000_1, hasNewPlayer else { return false }
+        let volume = readOutputVolumeScalar(deviceID: deviceID)
+        let playersNow = runningOutputProcessObjects(on: deviceID)
+        guard AutoStandbyPolicy.shouldResume(
+            muted: muted, outputVolume: volume, hasRunningOutput: playersNow.map { !$0.isEmpty }
+        ) else { return false }
         os_log(.default, log: appLog, "%{public}s resuming from standby", AppInfo.displayName)
         requestStart(outputDeviceID: deviceID, config: config, retriesRemaining: 2)
         return true

@@ -124,11 +124,10 @@ func readOutputMute(deviceID: AudioObjectID) -> Bool {
     return status == noErr && muted != 0
 }
 
-/// The set of process objects currently emitting audio output. Unlike
-/// kAudioDevicePropertyDeviceIsRunningSomewhere (which stays true whenever any
-/// client merely holds the device open), IsRunningOutput only reports live
-/// playback, so playback start/stop edges are visible without needing a tap.
-func runningOutputProcessObjects() -> Set<AudioObjectID> {
+/// Active output streams on the routed device, excluding our playback engine.
+/// A stream may keep running through silence; this is not an audibility meter.
+/// `nil` means enumeration failed, so callers must not assume playback stopped.
+func runningOutputProcessObjects(on outputDeviceID: AudioObjectID) -> Set<AudioObjectID>? {
     var listAddress = AudioObjectPropertyAddress(
         mSelector: kAudioHardwarePropertyProcessObjectList,
         mScope: kAudioObjectPropertyScopeGlobal,
@@ -137,13 +136,14 @@ func runningOutputProcessObjects() -> Set<AudioObjectID> {
     var dataSize: UInt32 = 0
     guard AudioObjectGetPropertyDataSize(
         AudioObjectID(kAudioObjectSystemObject), &listAddress, 0, nil, &dataSize
-    ) == noErr, dataSize > 0 else { return [] }
+    ) == noErr else { return nil }
+    guard dataSize > 0 else { return [] }
 
     let count = Int(dataSize) / MemoryLayout<AudioObjectID>.size
     var processObjects = [AudioObjectID](repeating: AudioObjectID(kAudioObjectUnknown), count: count)
     guard AudioObjectGetPropertyData(
         AudioObjectID(kAudioObjectSystemObject), &listAddress, 0, nil, &dataSize, &processObjects
-    ) == noErr else { return [] }
+    ) == noErr else { return nil }
 
     var runningAddress = AudioObjectPropertyAddress(
         mSelector: kAudioProcessPropertyIsRunningOutput,
@@ -151,15 +151,46 @@ func runningOutputProcessObjects() -> Set<AudioObjectID> {
         mElement: kAudioObjectPropertyElementMain
     )
     var running: Set<AudioObjectID> = []
-    for processObject in processObjects where processObject != kAudioObjectUnknown {
+    let currentPID = ProcessInfo.processInfo.processIdentifier
+    for processObject in processObjects.prefix(Int(dataSize) / MemoryLayout<AudioObjectID>.size)
+    where processObject != kAudioObjectUnknown {
         var isRunning: UInt32 = 0
         var size = UInt32(MemoryLayout<UInt32>.size)
-        if AudioObjectGetPropertyData(processObject, &runningAddress, 0, nil, &size, &isRunning) == noErr,
-           isRunning != 0 {
+        let status = AudioObjectGetPropertyData(processObject, &runningAddress, 0, nil, &size, &isRunning)
+        if status != noErr && status != kAudioHardwareBadObjectError { return nil }
+        if status == noErr, isRunning != 0 {
+            var pidAddress = AudioObjectPropertyAddress(
+                mSelector: kAudioProcessPropertyPID,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var pid: pid_t = 0
+            var pidSize = UInt32(MemoryLayout<pid_t>.size)
+            if AudioObjectGetPropertyData(processObject, &pidAddress, 0, nil, &pidSize, &pid) == noErr,
+               pid == currentPID { continue }
+
+            // Streams on another physical output cannot wake this route.
+            // If the device list is unavailable, conservatively count the
+            // stream rather than tearing down an unobservable live player.
+            if let devices = outputDevices(forProcessObject: processObject), !devices.contains(outputDeviceID) { continue }
             running.insert(processObject)
         }
     }
     return running
+}
+
+private func outputDevices(forProcessObject processObject: AudioObjectID) -> [AudioObjectID]? {
+    var address = AudioObjectPropertyAddress(
+        mSelector: kAudioProcessPropertyDevices,
+        mScope: kAudioObjectPropertyScopeOutput,
+        mElement: kAudioObjectPropertyElementMain
+    )
+    var size: UInt32 = 0
+    guard AudioObjectGetPropertyDataSize(processObject, &address, 0, nil, &size) == noErr else { return nil }
+    guard size > 0 else { return [] }
+    var devices = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+    guard AudioObjectGetPropertyData(processObject, &address, 0, nil, &size, &devices) == noErr else { return nil }
+    return Array(devices.prefix(Int(size) / MemoryLayout<AudioObjectID>.size))
 }
 
 func bufferFrameSizeAddress(

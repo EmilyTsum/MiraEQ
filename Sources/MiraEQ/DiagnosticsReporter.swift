@@ -42,6 +42,7 @@ extension AppDelegate {
                     // updateAutoStandby stops the engine without going through
                     // onStateChange, so sync the power assertion here.
                     self.updateRealtimeAudioActivity()
+                    self.writeDiagnosticsSnapshot()
                 }
                 // Only write the diagnostics snapshot while processing is
                 // running; otherwise this would touch the disk forever.
@@ -72,12 +73,15 @@ extension AppDelegate {
             "updated: \(updatedAt)",
             "",
             "active: \(diagnostics.isActive ? "true" : "false")",
+            "standby: \(audioEngine.isInStandby ? "true" : "false")",
+            "paused: \(isAudioPausedByUser ? "true" : "false")",
+            "silenceStandbyEnabled: \(audioEngine.silenceStandbyEnabled ? "true" : "false")",
             "silentSeconds: \(String(format: "%.1f", silentSeconds))",
             "lastAudiblePeak: \(String(format: "%.5f", lastPeak))",
             "startCount: \(diagnostics.startCount)",
             "seamlessStart: \(seamless ? "true" : "false")",
             "engine: \(diagnostics.engineRunning ? "running" : "stopped")",
-            "device: \(diagnostics.activeDeviceName ?? "Unknown")",
+            "device: \(diagnostics.activeDeviceName ?? activeDeviceName)",
             "sampleRate: \(Int(diagnostics.sampleRate.rounded()))",
             "channels: \(diagnostics.channels)",
             "targetLatencyMs: \(String(format: "%.2f", diagnostics.targetLatencyMs))",
@@ -110,12 +114,16 @@ extension AppDelegate {
         ]
 
         let content = lines.joined(separator: "\n").appending("\n")
-        DispatchQueue.global(qos: .utility).async {
+        Self.diagnosticsWriteQueue.async {
             let directory = (snapshotPath as NSString).deletingLastPathComponent
             try? FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true, attributes: nil)
             try? content.write(toFile: snapshotPath, atomically: true, encoding: .utf8)
         }
     }
+
+    private static let diagnosticsWriteQueue = DispatchQueue(
+        label: "com.noxlume03.miraeq.diagnostics", qos: .utility
+    )
 
     private static let diagnosticsDateFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()

@@ -115,6 +115,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, DeviceMonito
             }
             self.updateIcon()
             self.updateRealtimeAudioActivity()
+            self.writeDiagnosticsSnapshot()
         }
         // The engine may already be active if routing started synchronously.
         updateRealtimeAudioActivity()
