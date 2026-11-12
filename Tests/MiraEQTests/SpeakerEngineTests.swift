@@ -131,7 +131,7 @@ final class SpeakerEngineTests: XCTestCase {
     }
 
     func testLowLatencyFramesRespectTheDeviceRange() {
-        XCTAssertEqual(preferredBufferFrameSize(sampleRate: 44_100, targetLatencyMs: 1, range: AudioValueRange(mMinimum: 32, mMaximum: 512)), 64)
+        XCTAssertEqual(preferredBufferFrameSize(sampleRate: 44_100, targetLatencyMs: 1, range: AudioValueRange(mMinimum: 32, mMaximum: 512)), 128)
         XCTAssertEqual(preferredBufferFrameSize(sampleRate: 44_100, targetLatencyMs: 1, range: AudioValueRange(mMinimum: 128, mMaximum: 512)), 128)
         XCTAssertEqual(preferredBufferFrameSize(sampleRate: 48_000, targetLatencyMs: 12, range: AudioValueRange(mMinimum: 64, mMaximum: 1024)), 512)
     }

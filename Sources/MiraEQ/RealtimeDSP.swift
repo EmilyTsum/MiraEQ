@@ -154,8 +154,6 @@ struct DSPResources {
     let loudnessLowpassState: UnsafeMutablePointer<Float>
     let loudnessLowpassStateCapacity: Int
 
-    // Rear surround delay lines and lowpass states
-
     // Dynamic states mutated on the real-time callback thread
     var bassFocusEnvelope: Float
     var bassFocusCurrentHighGain: Float
@@ -544,7 +542,7 @@ func applyRealtimeEffects(
     // Fixed speaker order: Loudness -> Harmonics -> Focus -> Guard.
     // EQ and final protection follow in SpeakerAudioGraph.
 
-    // Loudness lift next: quiet-volume low boost before harmonics are
+    // Loudness lifts quiet-volume lows before harmonics are
     // derived, so the generated harmonics also benefit from the lift.
     applyLoudness(samples, frames: frames, channels: channels, config: config, outputVolume: volume, resources: resources)
 

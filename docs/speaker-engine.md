@@ -19,7 +19,7 @@ boosts. The global EQ gain is unity (0 dB). This is a gain setting, not automati
 normalization: protection can still reduce peaks dynamically.
 
 `SpeakerEngineProfile` is the common normalization boundary for runtime routing
-and effective-config inspection. `SpeakerDSPConfig` prepares finite coefficients
+and effective-config inspection. `DSPConfig` in `SpeakerDSPConfig.swift` prepares finite coefficients
 on the main actor. `RealtimeDSP` contains only the supported render stages and
 preallocated state. `SpeakerAudioGraph` owns exactly three processing nodes:
 source, EQ, and peak limiter. `AudioEngineManager` owns capture, device selection,
@@ -40,8 +40,11 @@ by another channel-folding operation.
 
 ## Buffering and latency
 
-The preferred hardware quantum is 64 frames for the 1 ms target, clamped to the
-physical device's supported range. The source retains one render quantum of
+The preferred hardware quantum has a stable floor of 128 frames for the 1 ms
+target, clamped to the physical device's supported range. A 64-frame physical /
+aggregate pair stalled the process-tap service in live testing on this Mac, so
+the advertised hardware minimum is not treated as a stable operating point.
+The source retains one render quantum of
 jitter margin plus the next block, instead of two extra quanta plus the target.
 The ring's allocated capacity is 32 ms before power-of-two rounding (previously
 80 ms); allocated capacity is not the actual queued delay. Startup prebuffering

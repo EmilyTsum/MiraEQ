@@ -13,8 +13,12 @@ flowchart TD
     Routing --> Store[ConfigurationStore]
     Store --> Parser[ConfigParser]
     Routing --> Tuning[DeviceTuning]
-    Menu -->|resolved EQConfig| Engine[AudioEngineManager]
-    Engine --> DSP[RealtimeDSP / AudioRingBuffer]
+    Routing --> Profile[SpeakerEngineProfile]
+    Profile -->|resolved EQConfig| Menu
+    Menu --> Engine[AudioEngineManager]
+    Engine --> Capture[AudioCapture / AudioRingBuffer]
+    Engine --> Graph[SpeakerAudioGraph]
+    Graph --> DSP[RealtimeDSP / DSPConfig]
 ```
 
 ## Ownership
@@ -28,7 +32,9 @@ flowchart TD
 | `ConfigParser` | existing text formats, aliases, numeric bounds, extracting explicit override fields |
 | `ConfigurationMonitor`, `FileWatcher` | observing changes, debouncing reloads, reattaching after atomic file replacement |
 | `AudioEngineManager` | serialized capture/playback lifecycle, graph updates, auto-standby, diagnostics |
-| `RealtimeDSP`, `AudioRingBuffer` | existing realtime processing and capture/playback buffer |
+| `SpeakerEngineProfile`, `DSPConfig` | supported features, unity gain, finite render coefficients prepared on the control thread |
+| `SpeakerAudioGraph` | source, exact-size EQ, and final peak limiter |
+| `AudioCapture`, `RealtimeDSP`, `AudioRingBuffer` | preallocated capture, fixed-order processing, and capture/playback buffering |
 
 ## Configuration rules
 
@@ -58,9 +64,10 @@ Float values round-trip without two-decimal rounding or latency-mode snapping.
 Composition runs once against the base preset through `DeviceTuning.applying`.
 The runtime and `--print-effective-config` verification use that same method.
 When neither the base preset nor an override specifies latency, the target is
-1 ms. The speaker profile forces unity global gain and disables legacy spatial effects. Low-end guard parameters and other base effects continue to come
-from the EQ preset. The bundled Rich/hidden pair now matches the active 55 Hz high-pass speaker profile
-with unity global gain and Bass Mono disabled.
+1 ms. The speaker profile forces unity global gain and disables unsupported
+effects. Low-end guard parameters and other supported base effects continue to
+come from the EQ preset. The bundled Rich/hidden pair matches the active 55 Hz
+high-pass speaker profile with unity global gain and Bass Mono disabled.
 
 Menu checkmarks display effective values. “Reset Processing to Preset” clears
 all menu overrides, including legacy spatial overrides. The narrower Bass Focus reset clears only its own override. Saving a single
@@ -123,7 +130,8 @@ zero volume, unknown volume controls, and unavailable playback activity.
 Tests use temporary configuration directories and do not write the user's
 MiraEQ configuration or start a CoreAudio process tap.
 
-DSP equations, signal ordering, and HAL resource management remain in the
-existing audio implementation. The configuration tests do not establish
-listening quality, dropout behavior, hardware hot-plug behavior, or permission
-behavior. Those require a macOS app run with real playback and output devices.
+The speaker-engine tests also render the native playback graph offline, check
+peak protection at unity gain, and exercise capture layouts and queue recovery.
+The configuration and offline tests do not establish listening quality,
+dropout behavior, hardware hot-plug behavior, or permission behavior. Those
+require a macOS app run with real playback and output devices.
