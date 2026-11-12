@@ -41,9 +41,10 @@ by another channel-folding operation.
 ## Buffering and latency
 
 The preferred hardware quantum has a stable floor of 128 frames for the 1 ms
-target, clamped to the physical device's supported range. A 64-frame physical /
-aggregate pair stalled the process-tap service in live testing on this Mac, so
-the advertised hardware minimum is not treated as a stable operating point.
+target, clamped to the physical device's supported range. The 64-frame trial
+could not be qualified while this Mac's audio-session service was stalled and
+crashing. That does not establish the buffer size as the cause; the advertised
+hardware minimum is not treated as a verified stable operating point.
 The source retains one render quantum of
 jitter margin plus the next block, instead of two extra quanta plus the target.
 The ring's allocated capacity is 32 ms before power-of-two rounding (previously

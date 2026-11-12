@@ -264,8 +264,8 @@ func nearestPowerOfTwo(_ value: UInt32) -> UInt32 {
 }
 
 func preferredBufferFrameSize(sampleRate: Double, targetLatencyMs: Float, range: AudioValueRange?) -> UInt32 {
-    // Keep the proven HAL floor. A 64-frame physical/aggregate pair can
-    // stall the process-tap service even when the device advertises support.
+    // Keep the proven HAL floor until a 64-frame physical/aggregate pair
+    // has passed live capture tests; advertised support alone is insufficient.
     let minimumStableFrames: UInt32 = 128
     let targetFrames = max(minimumStableFrames, UInt32((sampleRate * Double(max(targetLatencyMs, 0.25)) / 1_000).rounded()))
     var frames = nearestPowerOfTwo(targetFrames)
